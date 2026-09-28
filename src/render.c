@@ -1,5 +1,6 @@
 #include "render.h"
 #include <math.h>
+#include <string.h>
 #include <pango/pangocairo.h>
 
 #ifndef M_PI
@@ -208,4 +209,121 @@ void miime_render_on_screen(cairo_t *cr,
     miime_render_annotations(cr, stack, preview);
 
     cairo_restore(cr);
+}
+
+cairo_surface_t *miime_render_export(MiimeImage *img,
+                                     const MiimeAnnotationStack *stack,
+                                     int *out_w, int *out_h) {
+    if (!img) return NULL;
+
+    int img_w = miime_image_width(img);
+    int img_h = miime_image_height(img);
+    if (img_w <= 0 || img_h <= 0) return NULL;
+
+    /* Look for latest crop annotation on stack */
+    gboolean has_crop = FALSE;
+    double crop_x = 0, crop_y = 0, crop_w = img_w, crop_h = img_h;
+
+    if (stack) {
+        int count = miime_annot_stack_count(stack);
+        for (int i = count - 1; i >= 0; i--) {
+            const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
+            if (a && a->type == MIIME_ANNOT_CROP && a->point_count >= 4) {
+                double x1 = (a->points[0] < a->points[2]) ? a->points[0] : a->points[2];
+                double y1 = (a->points[1] < a->points[3]) ? a->points[1] : a->points[3];
+                double w = fabs(a->points[2] - a->points[0]);
+                double h = fabs(a->points[3] - a->points[1]);
+                if (w >= 1 && h >= 1) {
+                    crop_x = x1;
+                    crop_y = y1;
+                    crop_w = w;
+                    crop_h = h;
+                    has_crop = TRUE;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (has_crop) {
+        if (crop_x < 0) { crop_w += crop_x; crop_x = 0; }
+        if (crop_y < 0) { crop_h += crop_y; crop_y = 0; }
+        if (crop_x + crop_w > img_w) crop_w = img_w - crop_x;
+        if (crop_y + crop_h > img_h) crop_h = img_h - crop_y;
+        if (crop_w < 1) crop_w = 1;
+        if (crop_h < 1) crop_h = 1;
+    }
+
+    int target_w = (int)crop_w;
+    int target_h = (int)crop_h;
+
+    cairo_surface_t *out_surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, target_w, target_h);
+    cairo_t *cr = cairo_create(out_surf);
+
+    if (has_crop) {
+        cairo_translate(cr, -crop_x, -crop_y);
+    }
+
+    /* Paint base image */
+    cairo_surface_t *base_surf = miime_image_get_surface(img);
+    if (base_surf) {
+        cairo_set_source_surface(cr, base_surf, 0, 0);
+        cairo_paint(cr);
+    }
+
+    /* Paint annotations (skipping crop boxes from output render) */
+    if (stack) {
+        int count = miime_annot_stack_count(stack);
+        for (int i = 0; i < count; i++) {
+            const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
+            if (a && a->type != MIIME_ANNOT_CROP) {
+                render_one_annotation(cr, a);
+            }
+        }
+    }
+
+    cairo_destroy(cr);
+
+    if (out_w) *out_w = target_w;
+    if (out_h) *out_h = target_h;
+    return out_surf;
+}
+
+gboolean miime_render_save_to_file(cairo_surface_t *surface, const char *filepath) {
+    if (!surface || !filepath) return FALSE;
+
+    const char *ext = strrchr(filepath, '.');
+    if (ext && (g_ascii_strcasecmp(ext, ".jpg") == 0 || g_ascii_strcasecmp(ext, ".jpeg") == 0)) {
+        cairo_surface_flush(surface);
+        int w = cairo_image_surface_get_width(surface);
+        int h = cairo_image_surface_get_height(surface);
+        const unsigned char *data = cairo_image_surface_get_data(surface);
+        int stride = cairo_image_surface_get_stride(surface);
+
+        GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, w, h);
+        if (!pb) return FALSE;
+        guchar *dst_pixels = gdk_pixbuf_get_pixels(pb);
+        int dst_stride = gdk_pixbuf_get_rowstride(pb);
+
+        for (int y = 0; y < h; y++) {
+            const unsigned char *src_row = data + y * stride;
+            guchar *dst_row = dst_pixels + y * dst_stride;
+            for (int x = 0; x < w; x++) {
+                dst_row[x * 3 + 0] = src_row[x * 4 + 2]; /* R */
+                dst_row[x * 3 + 1] = src_row[x * 4 + 1]; /* G */
+                dst_row[x * 3 + 2] = src_row[x * 4 + 0]; /* B */
+            }
+        }
+        GError *err = NULL;
+        gboolean ok = gdk_pixbuf_save(pb, filepath, "jpeg", &err, "quality", "95", NULL);
+        g_object_unref(pb);
+        if (err) {
+            g_printerr("miime: error saving jpeg: %s\n", err->message);
+            g_error_free(err);
+        }
+        return ok;
+    } else {
+        cairo_status_t st = cairo_surface_write_to_png(surface, filepath);
+        return (st == CAIRO_STATUS_SUCCESS);
+    }
 }

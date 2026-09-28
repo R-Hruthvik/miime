@@ -18,6 +18,7 @@ void miime_canvas_destroy(MiimeCanvas *c);
 
 /* Set the image to display. Canvas takes a borrowed reference (caller owns lifetime). */
 void miime_canvas_set_image(MiimeCanvas *c, MiimeImage *img);
+MiimeImage *miime_canvas_get_image(const MiimeCanvas *c);
 
 /* Get the underlying GtkWidget for embedding in a container. */
 GtkWidget *miime_canvas_get_widget(MiimeCanvas *c);
@@ -31,5 +32,10 @@ void miime_canvas_set_annot_stack(MiimeCanvas *c, MiimeAnnotationStack *stack);
 
 /* Register toolbar toggle callback (Tab key). */
 void miime_canvas_set_toggle_toolbar_callback(MiimeCanvas *c, MiimeSimpleCallback cb, gpointer data);
+
+/* Register save and copy shortcuts callbacks. */
+void miime_canvas_set_save_callback(MiimeCanvas *c, MiimeSimpleCallback cb, gpointer data);
+void miime_canvas_set_save_as_callback(MiimeCanvas *c, MiimeSimpleCallback cb, gpointer data);
+void miime_canvas_set_copy_callback(MiimeCanvas *c, MiimeSimpleCallback cb, gpointer data);
 
 #endif /* MIIME_CANVAS_H */

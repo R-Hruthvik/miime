@@ -2,7 +2,10 @@
 #include "canvas.h"
 #include "tools.h"
 #include "annotate.h"
+#include "clipboard.h"
+#include "render.h"
 #include <stdlib.h>
+#include <string.h>
 
 struct MiimeWindow {
     GtkWidget            *gtk_window;
@@ -12,6 +15,7 @@ struct MiimeWindow {
     MiimeToolState       *tool_state;
     MiimeAnnotationStack *annot_stack;
     GtkWidget            *tool_buttons[9];
+    char                 *current_path;
 };
 
 static void on_tool_btn_toggled(GtkToggleButton *btn, gpointer user_data) {
@@ -57,28 +61,89 @@ static void on_clear_clicked(GtkButton *btn, gpointer user_data) {
     gtk_widget_queue_draw(miime_canvas_get_widget(win->canvas));
 }
 
+static void on_save_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    MiimeWindow *win = (MiimeWindow *)user_data;
+    miime_window_save(win);
+}
+
+static void on_copy_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    MiimeWindow *win = (MiimeWindow *)user_data;
+    miime_window_copy_clipboard(win);
+}
+
 static void on_toggle_toolbar(gpointer user_data) {
     MiimeWindow *win = (MiimeWindow *)user_data;
     miime_window_toggle_toolbar(win);
+}
+
+static void on_save_cb(gpointer user_data) {
+    MiimeWindow *win = (MiimeWindow *)user_data;
+    miime_window_save(win);
+}
+
+static void on_save_as_cb(gpointer user_data) {
+    MiimeWindow *win = (MiimeWindow *)user_data;
+    miime_window_save_as(win);
+}
+
+static void on_copy_cb(gpointer user_data) {
+    MiimeWindow *win = (MiimeWindow *)user_data;
+    miime_window_copy_clipboard(win);
+}
+
+static void save_file_dialog_finish(GObject *source, GAsyncResult *res, gpointer user_data) {
+    GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+    MiimeWindow *win = (MiimeWindow *)user_data;
+
+    GError *err = NULL;
+    GFile *file = gtk_file_dialog_save_finish(dialog, res, &err);
+    if (!file) {
+        if (err) g_error_free(err);
+        return;
+    }
+
+    char *path = g_file_get_path(file);
+    g_object_unref(file);
+    if (!path) return;
+
+    MiimeImage *img = miime_canvas_get_image(win->canvas);
+    if (img) {
+        int w, h;
+        cairo_surface_t *surf = miime_render_export(img, win->annot_stack, &w, &h);
+        if (surf) {
+            miime_render_save_to_file(surf, path);
+            cairo_surface_destroy(surf);
+            if (win->current_path) g_free(win->current_path);
+            win->current_path = path;
+            return;
+        }
+    }
+    g_free(path);
 }
 
 MiimeWindow *miime_window_new(GtkApplication *app) {
     MiimeWindow *win = malloc(sizeof(MiimeWindow));
     if (!win) return NULL;
 
-    win->tool_state = miime_tool_state_new();
-    win->annot_stack = miime_annot_stack_new();
-    win->canvas = miime_canvas_new();
+    win->tool_state   = miime_tool_state_new();
+    win->annot_stack  = miime_annot_stack_new();
+    win->canvas       = miime_canvas_new();
+    win->current_path = NULL;
 
     if (win->canvas) {
         miime_canvas_set_tool_state(win->canvas, win->tool_state);
         miime_canvas_set_annot_stack(win->canvas, win->annot_stack);
         miime_canvas_set_toggle_toolbar_callback(win->canvas, on_toggle_toolbar, win);
+        miime_canvas_set_save_callback(win->canvas, on_save_cb, win);
+        miime_canvas_set_save_as_callback(win->canvas, on_save_as_cb, win);
+        miime_canvas_set_copy_callback(win->canvas, on_copy_cb, win);
     }
 
     win->gtk_window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(win->gtk_window), "MIIME");
-    gtk_window_set_default_size(GTK_WINDOW(win->gtk_window), 960, 680);
+    gtk_window_set_default_size(GTK_WINDOW(win->gtk_window), 980, 680);
 
     /* Main vertical container */
     win->main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -145,6 +210,19 @@ MiimeWindow *miime_window_new(GtkApplication *app) {
     gtk_box_append(GTK_BOX(win->toolbar),
                    gtk_separator_new(GTK_ORIENTATION_VERTICAL));
 
+    /* Export buttons: Save, Copy */
+    GtkWidget *save_btn = gtk_button_new_with_label("Save");
+    g_signal_connect(save_btn, "clicked", G_CALLBACK(on_save_clicked), win);
+    gtk_box_append(GTK_BOX(win->toolbar), save_btn);
+
+    GtkWidget *copy_btn = gtk_button_new_with_label("Copy");
+    g_signal_connect(copy_btn, "clicked", G_CALLBACK(on_copy_clicked), win);
+    gtk_box_append(GTK_BOX(win->toolbar), copy_btn);
+
+    /* Separator */
+    gtk_box_append(GTK_BOX(win->toolbar),
+                   gtk_separator_new(GTK_ORIENTATION_VERTICAL));
+
     /* Action buttons: Undo, Redo, Clear */
     GtkWidget *undo_btn = gtk_button_new_with_label("Undo");
     g_signal_connect(undo_btn, "clicked", G_CALLBACK(on_undo_clicked), win);
@@ -180,6 +258,9 @@ void miime_window_destroy(MiimeWindow *win) {
         if (win->annot_stack) {
             miime_annot_stack_free(win->annot_stack);
         }
+        if (win->current_path) {
+            g_free(win->current_path);
+        }
         free(win);
     }
 }
@@ -204,4 +285,65 @@ void miime_window_toggle_toolbar(MiimeWindow *win) {
     if (!win || !win->toolbar) return;
     gboolean vis = gtk_widget_get_visible(win->toolbar);
     gtk_widget_set_visible(win->toolbar, !vis);
+}
+
+void miime_window_set_image_path(MiimeWindow *win, const char *path) {
+    if (!win) return;
+    if (win->current_path) g_free(win->current_path);
+    win->current_path = path ? g_strdup(path) : NULL;
+}
+
+const char *miime_window_get_image_path(const MiimeWindow *win) {
+    return win ? win->current_path : NULL;
+}
+
+void miime_window_save(MiimeWindow *win) {
+    if (!win) return;
+
+    if (!win->current_path) {
+        miime_window_save_as(win);
+        return;
+    }
+
+    MiimeImage *img = miime_canvas_get_image(win->canvas);
+    if (!img) return;
+
+    int w, h;
+    cairo_surface_t *surf = miime_render_export(img, win->annot_stack, &w, &h);
+    if (surf) {
+        miime_render_save_to_file(surf, win->current_path);
+        cairo_surface_destroy(surf);
+    }
+}
+
+void miime_window_save_as(MiimeWindow *win) {
+    if (!win) return;
+
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Save Image As");
+    if (win->current_path) {
+        char *basename = g_path_get_basename(win->current_path);
+        gtk_file_dialog_set_initial_name(dialog, basename);
+        g_free(basename);
+    } else {
+        gtk_file_dialog_set_initial_name(dialog, "export.png");
+    }
+
+    gtk_file_dialog_save(dialog, GTK_WINDOW(win->gtk_window), NULL,
+                         save_file_dialog_finish, win);
+}
+
+void miime_window_copy_clipboard(MiimeWindow *win) {
+    if (!win) return;
+
+    MiimeImage *img = miime_canvas_get_image(win->canvas);
+    if (!img) return;
+
+    int w, h;
+    cairo_surface_t *surf = miime_render_export(img, win->annot_stack, &w, &h);
+    if (surf) {
+        GdkClipboard *cb = gdk_display_get_clipboard(gtk_widget_get_display(win->gtk_window));
+        miime_clipboard_copy_surface(cb, surf);
+        cairo_surface_destroy(surf);
+    }
 }

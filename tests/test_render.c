@@ -1,7 +1,9 @@
 #include "../src/render.h"
 #include "../src/annotate.h"
+#include "../src/image.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void test_render_shapes_offscreen(void) {
@@ -118,8 +120,57 @@ static void test_render_shapes_offscreen(void) {
     printf("PASS: test_render_shapes_offscreen\n");
 }
 
+static void test_render_export(void) {
+    /* Create a 100x100 dummy image */
+    GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 100, 100);
+    gdk_pixbuf_save(pb, "/tmp/miime_test_export_base.png", "png", NULL, NULL);
+    g_object_unref(pb);
+
+    MiimeImage *img = miime_image_load("/tmp/miime_test_export_base.png");
+    assert(img != NULL);
+
+    MiimeAnnotationStack *stack = miime_annot_stack_new();
+
+    /* Uncropped export */
+    int w = 0, h = 0;
+    cairo_surface_t *surf = miime_render_export(img, stack, &w, &h);
+    assert(surf != NULL);
+    assert(w == 100 && h == 100);
+
+    gboolean saved_png = miime_render_save_to_file(surf, "/tmp/miime_test_out.png");
+    assert(saved_png == TRUE);
+
+    gboolean saved_jpg = miime_render_save_to_file(surf, "/tmp/miime_test_out.jpg");
+    assert(saved_jpg == TRUE);
+    cairo_surface_destroy(surf);
+
+    /* Add crop annotation: 20,20 to 60,70 -> 40x50 */
+    MiimeAnnotation crop;
+    memset(&crop, 0, sizeof(crop));
+    crop.type = MIIME_ANNOT_CROP;
+    crop.points[0] = 20; crop.points[1] = 20;
+    crop.points[2] = 60; crop.points[3] = 70;
+    crop.point_count = 4;
+    miime_annot_stack_push(stack, crop);
+
+    cairo_surface_t *cropped_surf = miime_render_export(img, stack, &w, &h);
+    assert(cropped_surf != NULL);
+    assert(w == 40 && h == 50);
+    cairo_surface_destroy(cropped_surf);
+
+    miime_annot_stack_free(stack);
+    miime_image_free(img);
+
+    remove("/tmp/miime_test_export_base.png");
+    remove("/tmp/miime_test_out.png");
+    remove("/tmp/miime_test_out.jpg");
+
+    printf("PASS: test_render_export\n");
+}
+
 int main(void) {
     test_render_shapes_offscreen();
-    printf("All render shape tests passed.\n");
+    test_render_export();
+    printf("All render tests passed.\n");
     return 0;
 }

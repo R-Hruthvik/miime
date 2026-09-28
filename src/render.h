@@ -25,4 +25,17 @@ void miime_render_annotations(cairo_t *cr,
                               const MiimeAnnotationStack *stack,
                               const MiimeAnnotation *preview);
 
+/*
+ * Bake base image + all annotations into a flat Cairo ARGB32 surface.
+ * If a crop annotation exists, crops the output surface to that region.
+ * Returns newly created cairo_surface_t (caller must cairo_surface_destroy).
+ * Sets out_w and out_h if non-NULL.
+ */
+cairo_surface_t *miime_render_export(MiimeImage *img,
+                                     const MiimeAnnotationStack *stack,
+                                     int *out_w, int *out_h);
+
+/* Save exported surface to a file (PNG or JPEG based on extension). Returns TRUE on success. */
+gboolean miime_render_save_to_file(cairo_surface_t *surface, const char *filepath);
+
 #endif /* MIIME_RENDER_H */

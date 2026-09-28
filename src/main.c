@@ -22,6 +22,7 @@ static void on_navigate(int direction, gpointer user_data) {
     g_img = miime_image_load(path);
     if (g_img) {
         miime_canvas_set_image(miime_window_get_canvas(g_win), g_img);
+        miime_window_set_image_path(g_win, path);
     }
 }
 
@@ -39,6 +40,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         g_img = miime_image_load(g_image_path);
         if (g_img) {
             miime_canvas_set_image(miime_window_get_canvas(g_win), g_img);
+            miime_window_set_image_path(g_win, g_image_path);
             if (!g_dir_list) {
                 g_dir_list = miime_dir_list_new(g_image_path);
                 miime_canvas_set_nav_callback(miime_window_get_canvas(g_win), on_navigate, NULL);

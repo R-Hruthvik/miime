@@ -20,6 +20,12 @@ struct MiimeCanvas {
     gpointer              nav_data;
     MiimeSimpleCallback   toggle_tb_cb;
     gpointer              toggle_tb_data;
+    MiimeSimpleCallback   save_cb;
+    gpointer              save_data;
+    MiimeSimpleCallback   save_as_cb;
+    gpointer              save_as_data;
+    MiimeSimpleCallback   copy_cb;
+    gpointer              copy_data;
     MiimeToolState       *tool_state;   /* borrowed */
     MiimeAnnotationStack *annot_stack;  /* borrowed */
 };
@@ -249,6 +255,20 @@ static gboolean canvas_key_cb(GtkEventControllerKey *ctrl,
         return TRUE;
     }
 
+    if ((keyval == GDK_KEY_c || keyval == GDK_KEY_C) && (state & GDK_CONTROL_MASK)) {
+        if (c->copy_cb) c->copy_cb(c->copy_data);
+        return TRUE;
+    }
+
+    if ((keyval == GDK_KEY_s || keyval == GDK_KEY_S) && (state & GDK_CONTROL_MASK)) {
+        if (state & GDK_SHIFT_MASK) {
+            if (c->save_as_cb) c->save_as_cb(c->save_as_data);
+        } else {
+            if (c->save_cb) c->save_cb(c->save_data);
+        }
+        return TRUE;
+    }
+
     if (keyval == GDK_KEY_space) {
         if (c->nav_cb) c->nav_cb(+1, c->nav_data);
         return TRUE;
@@ -345,6 +365,10 @@ void miime_canvas_set_image(MiimeCanvas *c, MiimeImage *img) {
     gtk_widget_queue_draw(c->drawing_area);
 }
 
+MiimeImage *miime_canvas_get_image(const MiimeCanvas *c) {
+    return c ? c->image : NULL;
+}
+
 GtkWidget *miime_canvas_get_widget(MiimeCanvas *c) {
     return c ? c->drawing_area : NULL;
 }
@@ -369,4 +393,22 @@ void miime_canvas_set_toggle_toolbar_callback(MiimeCanvas *c, MiimeSimpleCallbac
     if (!c) return;
     c->toggle_tb_cb = cb;
     c->toggle_tb_data = data;
+}
+
+void miime_canvas_set_save_callback(MiimeCanvas *c, MiimeSimpleCallback cb, gpointer data) {
+    if (!c) return;
+    c->save_cb = cb;
+    c->save_data = data;
+}
+
+void miime_canvas_set_save_as_callback(MiimeCanvas *c, MiimeSimpleCallback cb, gpointer data) {
+    if (!c) return;
+    c->save_as_cb = cb;
+    c->save_as_data = data;
+}
+
+void miime_canvas_set_copy_callback(MiimeCanvas *c, MiimeSimpleCallback cb, gpointer data) {
+    if (!c) return;
+    c->copy_cb = cb;
+    c->copy_data = data;
 }

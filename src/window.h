@@ -29,4 +29,13 @@ MiimeAnnotationStack *miime_window_get_annot_stack(MiimeWindow *win);
 /* Toggle toolbar visibility (Tab key). */
 void miime_window_toggle_toolbar(MiimeWindow *win);
 
+/* Current image path tracking */
+void miime_window_set_image_path(MiimeWindow *win, const char *path);
+const char *miime_window_get_image_path(const MiimeWindow *win);
+
+/* Export actions */
+void miime_window_save(MiimeWindow *win);
+void miime_window_save_as(MiimeWindow *win);
+void miime_window_copy_clipboard(MiimeWindow *win);
+
 #endif /* MIIME_WINDOW_H */
