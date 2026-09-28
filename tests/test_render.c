@@ -89,6 +89,15 @@ static void test_render_shapes_offscreen(void) {
     a7.blur_data = calloc(40 * 40 * 4, 1);
     miime_annot_stack_push(stack, a7);
 
+    /* Crop */
+    MiimeAnnotation a8;
+    memset(&a8, 0, sizeof(a8));
+    a8.type = MIIME_ANNOT_CROP;
+    a8.points[0] = 5; a8.points[1] = 5;
+    a8.points[2] = 150; a8.points[3] = 150;
+    a8.point_count = 4;
+    miime_annot_stack_push(stack, a8);
+
     /* Preview shape */
     MiimeAnnotation preview;
     memset(&preview, 0, sizeof(preview));

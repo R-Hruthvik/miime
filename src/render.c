@@ -126,9 +126,29 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a) {
             break;
         }
 
-        case MIIME_ANNOT_CROP:
-            /* Handled in later tasks */
+        case MIIME_ANNOT_CROP: {
+            if (a->point_count < 4) break;
+            double x = (a->points[0] < a->points[2]) ? a->points[0] : a->points[2];
+            double y = (a->points[1] < a->points[3]) ? a->points[1] : a->points[3];
+            double w = fabs(a->points[2] - a->points[0]);
+            double h = fabs(a->points[3] - a->points[1]);
+            if (w < 1 || h < 1) break;
+
+            cairo_save(cr);
+            double dashes[] = {6.0, 4.0};
+            cairo_set_dash(cr, dashes, 2, 0.0);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.9);
+            cairo_set_line_width(cr, 2.0);
+            cairo_rectangle(cr, x, y, w, h);
+            cairo_stroke(cr);
+
+            cairo_set_dash(cr, dashes, 2, 5.0);
+            cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.9);
+            cairo_rectangle(cr, x, y, w, h);
+            cairo_stroke(cr);
+            cairo_restore(cr);
             break;
+        }
     }
 }
 
