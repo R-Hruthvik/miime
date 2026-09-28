@@ -1,6 +1,8 @@
 #include "tools.h"
+#include "image.h"
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 struct MiimeToolState {
     MiimeToolType type;
@@ -213,6 +215,86 @@ gboolean miime_tool_text_key(MiimeToolState *ts, guint keyval,
     }
 
     return FALSE;
+}
+
+void miime_tool_compute_blur(MiimeToolState *ts, MiimeImage *img) {
+    if (!ts || !ts->active || ts->type != MIIME_TOOL_BLUR || !img) return;
+
+    MiimeAnnotation *a = &ts->current;
+    double x = (a->points[0] < a->points[2]) ? a->points[0] : a->points[2];
+    double y = (a->points[1] < a->points[3]) ? a->points[1] : a->points[3];
+    double w = fabs(a->points[2] - a->points[0]);
+    double h = fabs(a->points[3] - a->points[1]);
+
+    int bx = (int)x, by = (int)y, bw = (int)w, bh = (int)h;
+    if (bw < 1 || bh < 1) return;
+
+    int img_w = miime_image_width(img);
+    int img_h = miime_image_height(img);
+    if (bx < 0) { bw += bx; bx = 0; }
+    if (by < 0) { bh += by; by = 0; }
+    if (bx + bw > img_w) bw = img_w - bx;
+    if (by + bh > img_h) bh = img_h - by;
+    if (bw < 1 || bh < 1) return;
+
+    cairo_surface_t *surf = miime_image_get_surface(img);
+    if (!surf) return;
+
+    cairo_surface_flush(surf);
+    const unsigned char *pixels = cairo_image_surface_get_data(surf);
+    int stride = cairo_image_surface_get_stride(surf);
+
+    int factor = 8;
+    a->blur_width = bw;
+    a->blur_height = bh;
+    a->blur_stride = bw * 4;
+    a->blur_data = malloc(bw * bh * 4);
+    if (!a->blur_data) return;
+
+    /* Pixelate: for each factor x factor block, average colors in ARGB32 */
+    for (int block_y = 0; block_y < bh; block_y += factor) {
+        for (int block_x = 0; block_x < bw; block_x += factor) {
+            int cur_bw = (block_x + factor <= bw) ? factor : (bw - block_x);
+            int cur_bh = (block_y + factor <= bh) ? factor : (bh - block_y);
+
+            long long sum_b = 0, sum_g = 0, sum_r = 0, sum_a = 0;
+            int count = 0;
+
+            for (int dy = 0; dy < cur_bh; dy++) {
+                const unsigned char *row = pixels + (by + block_y + dy) * stride;
+                for (int dx = 0; dx < cur_bw; dx++) {
+                    int sx = bx + block_x + dx;
+                    const unsigned char *p = row + sx * 4;
+                    sum_b += p[0];
+                    sum_g += p[1];
+                    sum_r += p[2];
+                    sum_a += p[3];
+                    count++;
+                }
+            }
+
+            unsigned char avg_b = (count > 0) ? (unsigned char)(sum_b / count) : 0;
+            unsigned char avg_g = (count > 0) ? (unsigned char)(sum_g / count) : 0;
+            unsigned char avg_r = (count > 0) ? (unsigned char)(sum_r / count) : 0;
+            unsigned char avg_a = (count > 0) ? (unsigned char)(sum_a / count) : 255;
+
+            for (int dy = 0; dy < cur_bh; dy++) {
+                unsigned char *dst_row = a->blur_data + (block_y + dy) * a->blur_stride;
+                for (int dx = 0; dx < cur_bw; dx++) {
+                    int px_idx = (block_x + dx) * 4;
+                    dst_row[px_idx + 0] = avg_b;
+                    dst_row[px_idx + 1] = avg_g;
+                    dst_row[px_idx + 2] = avg_r;
+                    dst_row[px_idx + 3] = avg_a;
+                }
+            }
+        }
+    }
+
+    a->points[0] = bx;
+    a->points[1] = by;
+    a->points[2] = bx + bw;
+    a->points[3] = by + bh;
 }
 
 const MiimeAnnotation *miime_tool_get_preview(const MiimeToolState *ts) {

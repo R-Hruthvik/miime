@@ -180,6 +180,11 @@ static void canvas_draw_drag_end_cb(GtkGestureDrag *gesture,
     double wy = c->draw_start_y + offset_y;
     double ix, iy;
     widget_to_image(c, wx, wy, &ix, &iy);
+
+    if (miime_tool_get_type(c->tool_state) == MIIME_TOOL_BLUR) {
+        miime_tool_compute_blur(c->tool_state, c->image);
+    }
+
     miime_tool_on_release(c->tool_state, ix, iy, c->annot_stack);
     gtk_widget_queue_draw(c->drawing_area);
 }

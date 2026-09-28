@@ -4,6 +4,8 @@
 #include "annotate.h"
 #include <gdk/gdk.h>
 
+typedef struct MiimeImage MiimeImage;
+
 typedef enum {
     MIIME_TOOL_PEN,
     MIIME_TOOL_HIGHLIGHTER,
@@ -36,6 +38,9 @@ void miime_tool_on_release(MiimeToolState *ts, double x, double y,
 /* Text input keystroke handler. */
 gboolean miime_tool_text_key(MiimeToolState *ts, guint keyval,
                              MiimeAnnotationStack *stack);
+
+/* Compute blur raster patch from base image for current selection. */
+void miime_tool_compute_blur(MiimeToolState *ts, MiimeImage *img);
 
 /* Get the in-progress annotation for live preview (NULL if idle). */
 const MiimeAnnotation *miime_tool_get_preview(const MiimeToolState *ts);

@@ -76,6 +76,19 @@ static void test_render_shapes_offscreen(void) {
     a6.color_r = 1.0; a6.color_a = 1.0;
     miime_annot_stack_push(stack, a6);
 
+    /* Blur */
+    MiimeAnnotation a7;
+    memset(&a7, 0, sizeof(a7));
+    a7.type = MIIME_ANNOT_BLUR;
+    a7.points[0] = 10; a7.points[1] = 10;
+    a7.points[2] = 50; a7.points[3] = 50;
+    a7.point_count = 4;
+    a7.blur_width = 40;
+    a7.blur_height = 40;
+    a7.blur_stride = 40 * 4;
+    a7.blur_data = calloc(40 * 40 * 4, 1);
+    miime_annot_stack_push(stack, a7);
+
     /* Preview shape */
     MiimeAnnotation preview;
     memset(&preview, 0, sizeof(preview));

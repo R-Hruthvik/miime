@@ -102,7 +102,30 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a) {
             break;
         }
 
-        case MIIME_ANNOT_BLUR:
+        case MIIME_ANNOT_BLUR: {
+            if (a->blur_data && a->blur_width >= 1 && a->blur_height >= 1) {
+                cairo_surface_t *patch = cairo_image_surface_create_for_data(
+                    a->blur_data, CAIRO_FORMAT_ARGB32,
+                    a->blur_width, a->blur_height, a->blur_stride);
+                cairo_set_source_surface(cr, patch, a->points[0], a->points[1]);
+                cairo_paint(cr);
+                cairo_surface_destroy(patch);
+            } else if (a->point_count >= 4) {
+                double x = (a->points[0] < a->points[2]) ? a->points[0] : a->points[2];
+                double y = (a->points[1] < a->points[3]) ? a->points[1] : a->points[3];
+                double w = fabs(a->points[2] - a->points[0]);
+                double h = fabs(a->points[3] - a->points[1]);
+                cairo_set_source_rgba(cr, 0.3, 0.6, 1.0, 0.3);
+                cairo_rectangle(cr, x, y, w, h);
+                cairo_fill(cr);
+                cairo_set_source_rgba(cr, 0.3, 0.6, 1.0, 0.8);
+                cairo_set_line_width(cr, 1.5);
+                cairo_rectangle(cr, x, y, w, h);
+                cairo_stroke(cr);
+            }
+            break;
+        }
+
         case MIIME_ANNOT_CROP:
             /* Handled in later tasks */
             break;
