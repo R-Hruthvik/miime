@@ -35,5 +35,22 @@ test_render: tests/test_render.c src/render.c src/annotate.c src/image.c
 
 test: test_image test_annotate test_render
 
-.PHONY: all clean test test_image test_annotate test_render
+PREFIX ?= /usr/local
+BINDIR = $(PREFIX)/bin
+DATADIR = $(PREFIX)/share
+
+install: $(BIN)
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 $(BIN) $(DESTDIR)$(BINDIR)/$(BIN)
+	install -d $(DESTDIR)$(DATADIR)/applications
+	install -m 644 data/com.miime.app.desktop $(DESTDIR)$(DATADIR)/applications/
+	install -d $(DESTDIR)$(DATADIR)/icons/hicolor/scalable/apps
+	install -m 644 data/icons/com.miime.app.svg $(DESTDIR)$(DATADIR)/icons/hicolor/scalable/apps/
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/$(BIN)
+	rm -f $(DESTDIR)$(DATADIR)/applications/com.miime.app.desktop
+	rm -f $(DESTDIR)$(DATADIR)/icons/hicolor/scalable/apps/com.miime.app.svg
+
+.PHONY: all clean test test_image test_annotate test_render install uninstall
 
