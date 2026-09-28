@@ -18,6 +18,8 @@ struct MiimeCanvas {
     double                draw_start_y;
     MiimeNavCallback      nav_cb;
     gpointer              nav_data;
+    MiimeSimpleCallback   toggle_tb_cb;
+    gpointer              toggle_tb_data;
     MiimeToolState       *tool_state;   /* borrowed */
     MiimeAnnotationStack *annot_stack;  /* borrowed */
 };
@@ -201,6 +203,23 @@ static gboolean canvas_key_cb(GtkEventControllerKey *ctrl,
         return TRUE;
     }
 
+    if (keyval == GDK_KEY_Tab) {
+        if (c->toggle_tb_cb) c->toggle_tb_cb(c->toggle_tb_data);
+        return TRUE;
+    }
+
+    if (!(state & (GDK_CONTROL_MASK | GDK_ALT_MASK))) {
+        if (keyval == GDK_KEY_p || keyval == GDK_KEY_P) { miime_tool_set_type(c->tool_state, MIIME_TOOL_PEN); return TRUE; }
+        if (keyval == GDK_KEY_h || keyval == GDK_KEY_H) { miime_tool_set_type(c->tool_state, MIIME_TOOL_HIGHLIGHTER); return TRUE; }
+        if (keyval == GDK_KEY_l || keyval == GDK_KEY_L) { miime_tool_set_type(c->tool_state, MIIME_TOOL_LINE); return TRUE; }
+        if (keyval == GDK_KEY_r || keyval == GDK_KEY_R) { miime_tool_set_type(c->tool_state, MIIME_TOOL_RECT); return TRUE; }
+        if (keyval == GDK_KEY_e || keyval == GDK_KEY_E) { miime_tool_set_type(c->tool_state, MIIME_TOOL_ELLIPSE); return TRUE; }
+        if (keyval == GDK_KEY_a || keyval == GDK_KEY_A) { miime_tool_set_type(c->tool_state, MIIME_TOOL_ARROW); return TRUE; }
+        if (keyval == GDK_KEY_t || keyval == GDK_KEY_T) { miime_tool_set_type(c->tool_state, MIIME_TOOL_TEXT); return TRUE; }
+        if (keyval == GDK_KEY_b || keyval == GDK_KEY_B) { miime_tool_set_type(c->tool_state, MIIME_TOOL_BLUR); return TRUE; }
+        if (keyval == GDK_KEY_c || keyval == GDK_KEY_C) { miime_tool_set_type(c->tool_state, MIIME_TOOL_CROP); return TRUE; }
+    }
+
     if (keyval == GDK_KEY_1) {
         if (c->fit_mode) {
             int widget_w = gtk_widget_get_width(c->drawing_area);
@@ -344,4 +363,10 @@ void miime_canvas_set_tool_state(MiimeCanvas *c, MiimeToolState *ts) {
 void miime_canvas_set_annot_stack(MiimeCanvas *c, MiimeAnnotationStack *stack) {
     if (!c) return;
     c->annot_stack = stack;
+}
+
+void miime_canvas_set_toggle_toolbar_callback(MiimeCanvas *c, MiimeSimpleCallback cb, gpointer data) {
+    if (!c) return;
+    c->toggle_tb_cb = cb;
+    c->toggle_tb_data = data;
 }

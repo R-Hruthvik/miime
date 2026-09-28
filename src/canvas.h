@@ -8,6 +8,7 @@
 
 typedef struct MiimeCanvas MiimeCanvas;
 typedef void (*MiimeNavCallback)(int direction, gpointer user_data);
+typedef void (*MiimeSimpleCallback)(gpointer user_data);
 
 /* Create a new canvas (wraps a GtkDrawingArea). */
 MiimeCanvas *miime_canvas_new(void);
@@ -27,5 +28,8 @@ void miime_canvas_set_nav_callback(MiimeCanvas *c, MiimeNavCallback cb, gpointer
 /* Set tools and annotation stack (borrowed from window). */
 void miime_canvas_set_tool_state(MiimeCanvas *c, MiimeToolState *ts);
 void miime_canvas_set_annot_stack(MiimeCanvas *c, MiimeAnnotationStack *stack);
+
+/* Register toolbar toggle callback (Tab key). */
+void miime_canvas_set_toggle_toolbar_callback(MiimeCanvas *c, MiimeSimpleCallback cb, gpointer data);
 
 #endif /* MIIME_CANVAS_H */

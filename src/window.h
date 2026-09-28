@@ -26,4 +26,7 @@ MiimeToolState *miime_window_get_tool_state(MiimeWindow *win);
 /* Get annotation stack. */
 MiimeAnnotationStack *miime_window_get_annot_stack(MiimeWindow *win);
 
+/* Toggle toolbar visibility (Tab key). */
+void miime_window_toggle_toolbar(MiimeWindow *win);
+
 #endif /* MIIME_WINDOW_H */
