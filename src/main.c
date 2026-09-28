@@ -3,9 +3,27 @@
 #include <gtk/gtk.h>
 #include <stdlib.h>
 
-static MiimeWindow *g_win = NULL;
-static MiimeImage  *g_img = NULL;
-static const char  *g_image_path = NULL;
+static MiimeWindow  *g_win = NULL;
+static MiimeImage   *g_img = NULL;
+static MiimeDirList *g_dir_list = NULL;
+static const char   *g_image_path = NULL;
+
+static void on_navigate(int direction, gpointer user_data) {
+    (void)user_data;
+    if (!g_dir_list) return;
+
+    const char *path = (direction > 0)
+        ? miime_dir_list_next(g_dir_list)
+        : miime_dir_list_prev(g_dir_list);
+
+    if (!path) return;
+
+    miime_image_free(g_img);
+    g_img = miime_image_load(path);
+    if (g_img) {
+        miime_canvas_set_image(miime_window_get_canvas(g_win), g_img);
+    }
+}
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
@@ -19,6 +37,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         g_img = miime_image_load(g_image_path);
         if (g_img) {
             miime_canvas_set_image(miime_window_get_canvas(g_win), g_img);
+            g_dir_list = miime_dir_list_new(g_image_path);
+            miime_canvas_set_nav_callback(miime_window_get_canvas(g_win), on_navigate, NULL);
         } else {
             g_printerr("miime: could not load '%s'\n", g_image_path);
         }
@@ -34,6 +54,8 @@ static void on_shutdown(GtkApplication *app, gpointer user_data) {
     g_win = NULL;
     miime_image_free(g_img);
     g_img = NULL;
+    miime_dir_list_free(g_dir_list);
+    g_dir_list = NULL;
 }
 
 int main(int argc, char *argv[]) {

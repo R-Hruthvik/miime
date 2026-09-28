@@ -4,16 +4,18 @@
 #include <stdlib.h>
 
 struct MiimeCanvas {
-    GtkWidget   *drawing_area;
-    MiimeImage  *image;      /* borrowed, not owned */
-    double       zoom;
-    double       pan_x;
-    double       pan_y;
-    gboolean     fit_mode;   /* TRUE = fit-to-window */
-    double       last_mouse_x;
-    double       last_mouse_y;
-    double       drag_start_pan_x;
-    double       drag_start_pan_y;
+    GtkWidget        *drawing_area;
+    MiimeImage       *image;      /* borrowed, not owned */
+    double            zoom;
+    double            pan_x;
+    double            pan_y;
+    gboolean          fit_mode;   /* TRUE = fit-to-window */
+    double            last_mouse_x;
+    double            last_mouse_y;
+    double            drag_start_pan_x;
+    double            drag_start_pan_y;
+    MiimeNavCallback  nav_cb;
+    gpointer          nav_data;
 };
 
 static void canvas_draw_cb(GtkDrawingArea *area, cairo_t *cr,
@@ -161,6 +163,16 @@ static gboolean canvas_key_cb(GtkEventControllerKey *ctrl,
         return TRUE;
     }
 
+    if (keyval == GDK_KEY_space) {
+        if (c->nav_cb) c->nav_cb(+1, c->nav_data);
+        return TRUE;
+    }
+
+    if (keyval == GDK_KEY_BackSpace) {
+        if (c->nav_cb) c->nav_cb(-1, c->nav_data);
+        return TRUE;
+    }
+
     if (keyval == GDK_KEY_q || keyval == GDK_KEY_Q) {
         GtkRoot *root = gtk_widget_get_root(c->drawing_area);
         if (root && GTK_IS_WINDOW(root)) {
@@ -185,6 +197,8 @@ MiimeCanvas *miime_canvas_new(void) {
     c->last_mouse_y = 0.0;
     c->drag_start_pan_x = 0.0;
     c->drag_start_pan_y = 0.0;
+    c->nav_cb   = NULL;
+    c->nav_data = NULL;
 
     c->drawing_area = gtk_drawing_area_new();
     gtk_widget_set_hexpand(c->drawing_area, TRUE);
@@ -235,4 +249,10 @@ void miime_canvas_set_image(MiimeCanvas *c, MiimeImage *img) {
 
 GtkWidget *miime_canvas_get_widget(MiimeCanvas *c) {
     return c ? c->drawing_area : NULL;
+}
+
+void miime_canvas_set_nav_callback(MiimeCanvas *c, MiimeNavCallback cb, gpointer data) {
+    if (!c) return;
+    c->nav_cb = cb;
+    c->nav_data = data;
 }
