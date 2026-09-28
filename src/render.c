@@ -7,7 +7,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a) {
+static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolean is_preview) {
     if (!a) return;
 
     cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, a->color_a);
@@ -87,17 +87,47 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a) {
         }
 
         case MIIME_ANNOT_TEXT: {
-            if (a->text[0] == '\0') break;
+            double size = (a->font_size > 0.0) ? a->font_size : 18.0;
             PangoLayout *layout = pango_cairo_create_layout(cr);
             char font_desc_str[64];
-            double size = (a->font_size > 0.0) ? a->font_size : 18.0;
             snprintf(font_desc_str, sizeof(font_desc_str), "Sans %.0f", size);
             PangoFontDescription *font = pango_font_description_from_string(font_desc_str);
             pango_layout_set_font_description(layout, font);
             pango_layout_set_text(layout, a->text, -1);
-            cairo_move_to(cr, a->points[0], a->points[1]);
-            cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, a->color_a);
-            pango_cairo_show_layout(cr, layout);
+
+            if (a->text[0] != '\0') {
+                cairo_move_to(cr, a->points[0], a->points[1]);
+                cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, a->color_a);
+                pango_cairo_show_layout(cr, layout);
+            }
+
+            if (is_preview) {
+                int text_w = 0, text_h = 0;
+                pango_layout_get_pixel_size(layout, &text_w, &text_h);
+                if (text_h <= 0) text_h = (int)(size * 1.3);
+                if (text_h < 12) text_h = 12;
+
+                /* Draw dashed text bounding box */
+                cairo_save(cr);
+                double dashes[] = {3.0, 3.0};
+                cairo_set_dash(cr, dashes, 2, 0.0);
+                cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, 0.7);
+                cairo_set_line_width(cr, 1.0);
+                int box_w = (text_w > 0) ? text_w + 4 : (int)(size * 0.8);
+                cairo_rectangle(cr, a->points[0] - 2, a->points[1] - 2, box_w + 4, text_h + 4);
+                cairo_stroke(cr);
+
+                /* Draw insertion cursor caret */
+                cairo_set_dash(cr, NULL, 0, 0.0);
+                cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, 1.0);
+                cairo_set_line_width(cr, 2.0);
+                double caret_x = a->points[0] + text_w;
+                cairo_move_to(cr, caret_x, a->points[1]);
+                cairo_line_to(cr, caret_x, a->points[1] + text_h);
+                cairo_stroke(cr);
+                cairo_restore(cr);
+            }
+
             pango_font_description_free(font);
             g_object_unref(layout);
             break;
@@ -161,12 +191,12 @@ void miime_render_annotations(cairo_t *cr,
     if (stack) {
         int count = miime_annot_stack_count(stack);
         for (int i = 0; i < count; i++) {
-            render_one_annotation(cr, miime_annot_stack_get(stack, i));
+            render_one_annotation(cr, miime_annot_stack_get(stack, i), FALSE);
         }
     }
 
     if (preview) {
-        render_one_annotation(cr, preview);
+        render_one_annotation(cr, preview, TRUE);
     }
 }
 
@@ -277,7 +307,7 @@ cairo_surface_t *miime_render_export(MiimeImage *img,
         for (int i = 0; i < count; i++) {
             const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
             if (a && a->type != MIIME_ANNOT_CROP) {
-                render_one_annotation(cr, a);
+                render_one_annotation(cr, a, FALSE);
             }
         }
     }

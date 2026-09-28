@@ -114,7 +114,7 @@ void miime_tool_on_press(MiimeToolState *ts, double x, double y,
         ts->current.points[0] = x;
         ts->current.points[1] = y;
         ts->current.point_count = 2;
-        ts->current.font_size = 18.0;
+        ts->current.font_size = (ts->stroke_width >= 2.0) ? (ts->stroke_width * 6.0) : 18.0;
         ts->current.text[0] = '\0';
         ts->active = TRUE;
         return;
@@ -199,7 +199,9 @@ gboolean miime_tool_text_key(MiimeToolState *ts, guint keyval,
     if (keyval == GDK_KEY_BackSpace) {
         size_t len = strlen(ts->current.text);
         if (len > 0) {
-            ts->current.text[len - 1] = '\0';
+            char *prev = g_utf8_find_prev_char(ts->current.text, ts->current.text + len);
+            if (prev) *prev = '\0';
+            else ts->current.text[len - 1] = '\0';
         }
         return TRUE;
     }

@@ -176,6 +176,7 @@ MiimeWindow *miime_window_new(GtkApplication *app) {
     GtkToggleButton *first_btn = NULL;
     for (int i = 0; i < 9; i++) {
         GtkWidget *btn = gtk_toggle_button_new_with_label(tools[i].label);
+        gtk_widget_set_focusable(btn, FALSE);
         win->tool_buttons[i] = btn;
         g_object_set_data(G_OBJECT(btn), "tool-type", GINT_TO_POINTER(tools[i].type));
         if (i == 0) {
@@ -195,6 +196,7 @@ MiimeWindow *miime_window_new(GtkApplication *app) {
     /* Color picker button */
     GtkColorDialog *dlg = gtk_color_dialog_new();
     GtkWidget *color_btn = gtk_color_dialog_button_new(dlg);
+    gtk_widget_set_focusable(color_btn, FALSE);
     GdkRGBA red = {1.0f, 0.0f, 0.0f, 1.0f};
     gtk_color_dialog_button_set_rgba(GTK_COLOR_DIALOG_BUTTON(color_btn), &red);
     g_signal_connect(color_btn, "notify::rgba", G_CALLBACK(on_color_notify), win);
@@ -212,10 +214,12 @@ MiimeWindow *miime_window_new(GtkApplication *app) {
 
     /* Export buttons: Save, Copy */
     GtkWidget *save_btn = gtk_button_new_with_label("Save");
+    gtk_widget_set_focusable(save_btn, FALSE);
     g_signal_connect(save_btn, "clicked", G_CALLBACK(on_save_clicked), win);
     gtk_box_append(GTK_BOX(win->toolbar), save_btn);
 
     GtkWidget *copy_btn = gtk_button_new_with_label("Copy");
+    gtk_widget_set_focusable(copy_btn, FALSE);
     g_signal_connect(copy_btn, "clicked", G_CALLBACK(on_copy_clicked), win);
     gtk_box_append(GTK_BOX(win->toolbar), copy_btn);
 
@@ -225,14 +229,17 @@ MiimeWindow *miime_window_new(GtkApplication *app) {
 
     /* Action buttons: Undo, Redo, Clear */
     GtkWidget *undo_btn = gtk_button_new_with_label("Undo");
+    gtk_widget_set_focusable(undo_btn, FALSE);
     g_signal_connect(undo_btn, "clicked", G_CALLBACK(on_undo_clicked), win);
     gtk_box_append(GTK_BOX(win->toolbar), undo_btn);
 
     GtkWidget *redo_btn = gtk_button_new_with_label("Redo");
+    gtk_widget_set_focusable(redo_btn, FALSE);
     g_signal_connect(redo_btn, "clicked", G_CALLBACK(on_redo_clicked), win);
     gtk_box_append(GTK_BOX(win->toolbar), redo_btn);
 
     GtkWidget *clear_btn = gtk_button_new_with_label("Clear");
+    gtk_widget_set_focusable(clear_btn, FALSE);
     g_signal_connect(clear_btn, "clicked", G_CALLBACK(on_clear_clicked), win);
     gtk_box_append(GTK_BOX(win->toolbar), clear_btn);
 
@@ -242,6 +249,7 @@ MiimeWindow *miime_window_new(GtkApplication *app) {
         gtk_widget_set_hexpand(canvas_widget, TRUE);
         gtk_widget_set_vexpand(canvas_widget, TRUE);
         gtk_box_append(GTK_BOX(win->main_box), canvas_widget);
+        gtk_widget_grab_focus(canvas_widget);
     }
 
     return win;

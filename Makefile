@@ -19,7 +19,7 @@ src/%.o: src/%.c
 
 clean:
 	rm -f $(OBJ) $(BIN)
-	rm -f tests/test_image tests/test_annotate tests/test_render
+	rm -f tests/test_image tests/test_annotate tests/test_render tests/test_tools
 
 test_image: tests/test_image.c src/image.c src/image.h
 	$(CC) $(TEST_CFLAGS) tests/test_image.c src/image.c -o tests/test_image $(TEST_LDFLAGS)
@@ -33,7 +33,11 @@ test_render: tests/test_render.c src/render.c src/annotate.c src/image.c
 	$(CC) -std=c99 -Wall -Wextra $(shell pkg-config --cflags gtk4) tests/test_render.c src/render.c src/annotate.c src/image.c -o tests/test_render $(shell pkg-config --libs gtk4) -lm
 	./tests/test_render
 
-test: test_image test_annotate test_render
+test_tools: tests/test_tools.c src/tools.c src/annotate.c src/image.c
+	$(CC) -std=c99 -Wall -Wextra $(shell pkg-config --cflags gtk4) tests/test_tools.c src/tools.c src/annotate.c src/image.c -o tests/test_tools $(shell pkg-config --libs gtk4) -lm
+	./tests/test_tools
+
+test: test_image test_annotate test_render test_tools
 
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin

@@ -117,6 +117,8 @@ static void canvas_pan_drag_begin_cb(GtkGestureDrag *gesture,
                                      double x, double y,
                                      gpointer user_data) {
     MiimeCanvas *c = (MiimeCanvas *)user_data;
+    gtk_widget_grab_focus(c->drawing_area);
+
     guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
     (void)x; (void)y;
 
@@ -147,6 +149,8 @@ static void canvas_draw_drag_begin_cb(GtkGestureDrag *gesture,
                                       double start_x, double start_y,
                                       gpointer user_data) {
     MiimeCanvas *c = (MiimeCanvas *)user_data;
+    gtk_widget_grab_focus(c->drawing_area);
+
     guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
 
     if (button != 1 || !c->image || !c->tool_state) return;
@@ -314,6 +318,7 @@ MiimeCanvas *miime_canvas_new(void) {
     gtk_widget_set_hexpand(c->drawing_area, TRUE);
     gtk_widget_set_vexpand(c->drawing_area, TRUE);
     gtk_widget_set_focusable(c->drawing_area, TRUE);
+    gtk_widget_set_focus_on_click(c->drawing_area, TRUE);
 
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(c->drawing_area),
                                    canvas_draw_cb, c, NULL);
