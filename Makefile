@@ -29,7 +29,11 @@ test_annotate: tests/test_annotate.c src/annotate.c src/annotate.h
 	$(CC) -std=c99 -Wall -Wextra $(shell pkg-config --cflags glib-2.0) tests/test_annotate.c src/annotate.c -o tests/test_annotate $(shell pkg-config --libs glib-2.0)
 	./tests/test_annotate
 
-test: test_image test_annotate
+test_render: tests/test_render.c src/render.c src/annotate.c src/image.c
+	$(CC) -std=c99 -Wall -Wextra $(shell pkg-config --cflags gtk4) tests/test_render.c src/render.c src/annotate.c src/image.c -o tests/test_render $(shell pkg-config --libs gtk4) -lm
+	./tests/test_render
 
-.PHONY: all clean test test_image test_annotate
+test: test_image test_annotate test_render
+
+.PHONY: all clean test test_image test_annotate test_render
 
