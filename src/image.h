@@ -2,6 +2,7 @@
 #define MIIME_IMAGE_H
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <cairo.h>
 
 typedef struct MiimeImage MiimeImage;
 typedef struct MiimeDirList MiimeDirList;
@@ -16,7 +17,10 @@ void miime_image_free(MiimeImage *img);
 int miime_image_width(const MiimeImage *img);
 int miime_image_height(const MiimeImage *img);
 
-/* Get the underlying GdkPixbuf (borrowed — do not unref). */
+/* Get the Cairo image surface (borrowed — do not destroy). */
+cairo_surface_t *miime_image_get_surface(const MiimeImage *img);
+
+/* Get the underlying GdkPixbuf (borrowed — do not unref). May be NULL if freed. */
 GdkPixbuf *miime_image_get_pixbuf(const MiimeImage *img);
 
 /* Scan the directory containing image_path for image files, sorted alphabetically.

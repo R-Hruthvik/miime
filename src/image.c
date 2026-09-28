@@ -4,9 +4,10 @@
 #include <dirent.h>
 
 struct MiimeImage {
-    GdkPixbuf *pixbuf;
-    int        width;
-    int        height;
+    GdkPixbuf       *pixbuf;
+    cairo_surface_t *surface;
+    int              width;
+    int              height;
 };
 
 struct MiimeDirList {
@@ -14,6 +15,41 @@ struct MiimeDirList {
     int    count;
     int    current;     /* index of current image */
 };
+
+static cairo_surface_t *pixbuf_to_cairo_surface(GdkPixbuf *pb, int w, int h) {
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        return NULL;
+    }
+
+    unsigned char *surf_data = cairo_image_surface_get_data(surface);
+    int surf_stride = cairo_image_surface_get_stride(surface);
+
+    cairo_surface_flush(surface);
+
+    const guchar *px = gdk_pixbuf_get_pixels(pb);
+    int rowstride = gdk_pixbuf_get_rowstride(pb);
+    int n_channels = gdk_pixbuf_get_n_channels(pb);
+    gboolean has_alpha = gdk_pixbuf_get_has_alpha(pb);
+
+    for (int y = 0; y < h; y++) {
+        const guchar *src_row = px + y * rowstride;
+        unsigned char *dst_row = surf_data + y * surf_stride;
+        for (int x = 0; x < w; x++) {
+            guchar r = src_row[x * n_channels + 0];
+            guchar g = src_row[x * n_channels + 1];
+            guchar b = src_row[x * n_channels + 2];
+            guchar a = has_alpha ? src_row[x * n_channels + 3] : 255;
+            dst_row[x * 4 + 0] = (guchar)((b * a) / 255); /* B */
+            dst_row[x * 4 + 1] = (guchar)((g * a) / 255); /* G */
+            dst_row[x * 4 + 2] = (guchar)((r * a) / 255); /* R */
+            dst_row[x * 4 + 3] = a;                        /* A */
+        }
+    }
+
+    cairo_surface_mark_dirty(surface);
+    return surface;
+}
 
 MiimeImage *miime_image_load(const char *path) {
     if (!path) return NULL;
@@ -34,14 +70,19 @@ MiimeImage *miime_image_load(const char *path) {
         return NULL;
     }
 
-    img->pixbuf = pb;
     img->width  = gdk_pixbuf_get_width(pb);
     img->height = gdk_pixbuf_get_height(pb);
+    img->surface = pixbuf_to_cairo_surface(pb, img->width, img->height);
+    img->pixbuf = pb;
+
     return img;
 }
 
 void miime_image_free(MiimeImage *img) {
     if (img) {
+        if (img->surface) {
+            cairo_surface_destroy(img->surface);
+        }
         if (img->pixbuf) {
             g_object_unref(img->pixbuf);
         }
@@ -51,6 +92,7 @@ void miime_image_free(MiimeImage *img) {
 
 int miime_image_width(const MiimeImage *img)  { return img ? img->width  : 0; }
 int miime_image_height(const MiimeImage *img) { return img ? img->height : 0; }
+cairo_surface_t *miime_image_get_surface(const MiimeImage *img) { return img ? img->surface : NULL; }
 GdkPixbuf *miime_image_get_pixbuf(const MiimeImage *img) { return img ? img->pixbuf : NULL; }
 
 static int str_compare(const void *a, const void *b) {

@@ -6,8 +6,8 @@ SRC = src/main.c src/window.c src/image.c src/canvas.c src/render.c
 OBJ = $(SRC:.c=.o)
 BIN = miime
 
-TEST_CFLAGS = -std=c99 -Wall -Wextra $(shell pkg-config --cflags gdk-pixbuf-2.0)
-TEST_LDFLAGS = $(shell pkg-config --libs gdk-pixbuf-2.0)
+TEST_CFLAGS = -std=c99 -Wall -Wextra $(shell pkg-config --cflags gdk-pixbuf-2.0 cairo)
+TEST_LDFLAGS = $(shell pkg-config --libs gdk-pixbuf-2.0 cairo)
 
 all: $(BIN)
 

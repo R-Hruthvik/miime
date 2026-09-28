@@ -6,7 +6,7 @@
 static MiimeWindow  *g_win = NULL;
 static MiimeImage   *g_img = NULL;
 static MiimeDirList *g_dir_list = NULL;
-static const char   *g_image_path = NULL;
+static char         *g_image_path = NULL;
 
 static void on_navigate(int direction, gpointer user_data) {
     (void)user_data;
@@ -27,24 +27,38 @@ static void on_navigate(int direction, gpointer user_data) {
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
-    g_win = miime_window_new(app);
     if (!g_win) {
-        g_printerr("miime: failed to create window\n");
-        return;
+        g_win = miime_window_new(app);
+        if (!g_win) {
+            g_printerr("miime: failed to create window\n");
+            return;
+        }
     }
 
-    if (g_image_path) {
+    if (g_image_path && !g_img) {
         g_img = miime_image_load(g_image_path);
         if (g_img) {
             miime_canvas_set_image(miime_window_get_canvas(g_win), g_img);
-            g_dir_list = miime_dir_list_new(g_image_path);
-            miime_canvas_set_nav_callback(miime_window_get_canvas(g_win), on_navigate, NULL);
+            if (!g_dir_list) {
+                g_dir_list = miime_dir_list_new(g_image_path);
+                miime_canvas_set_nav_callback(miime_window_get_canvas(g_win), on_navigate, NULL);
+            }
         } else {
             g_printerr("miime: could not load '%s'\n", g_image_path);
         }
     }
 
     gtk_window_present(GTK_WINDOW(miime_window_get_widget(g_win)));
+}
+
+static void on_open(GApplication *app, GFile **files, gint n_files, const gchar *hint, gpointer user_data) {
+    (void)hint;
+    (void)user_data;
+    if (n_files > 0) {
+        if (g_image_path) g_free(g_image_path);
+        g_image_path = g_file_get_path(files[0]);
+    }
+    on_activate(GTK_APPLICATION(app), user_data);
 }
 
 static void on_shutdown(GtkApplication *app, gpointer user_data) {
@@ -56,20 +70,19 @@ static void on_shutdown(GtkApplication *app, gpointer user_data) {
     g_img = NULL;
     miime_dir_list_free(g_dir_list);
     g_dir_list = NULL;
+    if (g_image_path) {
+        g_free(g_image_path);
+        g_image_path = NULL;
+    }
 }
 
 int main(int argc, char *argv[]) {
-    /* Extract image path before GTK consumes args */
-    for (int i = 1; i < argc; i++) {
-        if (argv[i][0] != '-') {
-            g_image_path = argv[i];
-            break;
-        }
-    }
+    g_setenv("GSK_RENDERER", "cairo", FALSE);
 
     GtkApplication *app = gtk_application_new("com.miime.app",
-                                               G_APPLICATION_NON_UNIQUE);
+                                               G_APPLICATION_HANDLES_OPEN | G_APPLICATION_NON_UNIQUE);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+    g_signal_connect(app, "open", G_CALLBACK(on_open), NULL);
     g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
 
     int status = g_application_run(G_APPLICATION(app), argc, argv);
