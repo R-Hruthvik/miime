@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -std=c99 -Wall -Wextra -Werror $(shell pkg-config --cflags gtk4)
 LDFLAGS = $(shell pkg-config --libs gtk4) -lm
 
-SRC = src/main.c src/window.c src/image.c
+SRC = src/main.c src/window.c src/image.c src/canvas.c src/render.c
 OBJ = $(SRC:.c=.o)
 BIN = miime
 
