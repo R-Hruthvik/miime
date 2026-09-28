@@ -1,0 +1,6 @@
+*.o
+miime
+tests/test_image
+tests/test_annotate
+tests/test_render
+.superpowers/
