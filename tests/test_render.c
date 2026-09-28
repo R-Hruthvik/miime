@@ -65,6 +65,17 @@ static void test_render_shapes_offscreen(void) {
     a5.stroke_width = 4.0;
     miime_annot_stack_push(stack, a5);
 
+    /* Text */
+    MiimeAnnotation a6;
+    memset(&a6, 0, sizeof(a6));
+    a6.type = MIIME_ANNOT_TEXT;
+    a6.points[0] = 20; a6.points[1] = 50;
+    a6.point_count = 2;
+    strncpy(a6.text, "Hello MIIME", sizeof(a6.text) - 1);
+    a6.font_size = 14.0;
+    a6.color_r = 1.0; a6.color_a = 1.0;
+    miime_annot_stack_push(stack, a6);
+
     /* Preview shape */
     MiimeAnnotation preview;
     memset(&preview, 0, sizeof(preview));

@@ -1,5 +1,6 @@
 #include "render.h"
 #include <math.h>
+#include <pango/pangocairo.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -84,7 +85,23 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a) {
             break;
         }
 
-        case MIIME_ANNOT_TEXT:
+        case MIIME_ANNOT_TEXT: {
+            if (a->text[0] == '\0') break;
+            PangoLayout *layout = pango_cairo_create_layout(cr);
+            char font_desc_str[64];
+            double size = (a->font_size > 0.0) ? a->font_size : 18.0;
+            snprintf(font_desc_str, sizeof(font_desc_str), "Sans %.0f", size);
+            PangoFontDescription *font = pango_font_description_from_string(font_desc_str);
+            pango_layout_set_font_description(layout, font);
+            pango_layout_set_text(layout, a->text, -1);
+            cairo_move_to(cr, a->points[0], a->points[1]);
+            cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, a->color_a);
+            pango_cairo_show_layout(cr, layout);
+            pango_font_description_free(font);
+            g_object_unref(layout);
+            break;
+        }
+
         case MIIME_ANNOT_BLUR:
         case MIIME_ANNOT_CROP:
             /* Handled in later tasks */

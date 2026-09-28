@@ -191,6 +191,11 @@ static gboolean canvas_key_cb(GtkEventControllerKey *ctrl,
     MiimeCanvas *c = (MiimeCanvas *)user_data;
     (void)ctrl; (void)keycode;
 
+    if (miime_tool_text_key(c->tool_state, keyval, c->annot_stack)) {
+        gtk_widget_queue_draw(c->drawing_area);
+        return TRUE;
+    }
+
     if (keyval == GDK_KEY_1) {
         if (c->fit_mode) {
             int widget_w = gtk_widget_get_width(c->drawing_area);

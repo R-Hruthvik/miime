@@ -2,6 +2,7 @@
 #define MIIME_TOOLS_H
 
 #include "annotate.h"
+#include <gdk/gdk.h>
 
 typedef enum {
     MIIME_TOOL_PEN,
@@ -31,6 +32,10 @@ void miime_tool_on_press(MiimeToolState *ts, double x, double y,
 void miime_tool_on_drag(MiimeToolState *ts, double x, double y);
 void miime_tool_on_release(MiimeToolState *ts, double x, double y,
                            MiimeAnnotationStack *stack);
+
+/* Text input keystroke handler. */
+gboolean miime_tool_text_key(MiimeToolState *ts, guint keyval,
+                             MiimeAnnotationStack *stack);
 
 /* Get the in-progress annotation for live preview (NULL if idle). */
 const MiimeAnnotation *miime_tool_get_preview(const MiimeToolState *ts);
