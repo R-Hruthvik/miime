@@ -4,19 +4,33 @@
 #include <stdlib.h>
 
 struct MiimeCanvas {
-    GtkWidget        *drawing_area;
-    MiimeImage       *image;      /* borrowed, not owned */
-    double            zoom;
-    double            pan_x;
-    double            pan_y;
-    gboolean          fit_mode;   /* TRUE = fit-to-window */
-    double            last_mouse_x;
-    double            last_mouse_y;
-    double            drag_start_pan_x;
-    double            drag_start_pan_y;
-    MiimeNavCallback  nav_cb;
-    gpointer          nav_data;
+    GtkWidget            *drawing_area;
+    MiimeImage           *image;        /* borrowed, not owned */
+    double                zoom;
+    double                pan_x;
+    double                pan_y;
+    gboolean              fit_mode;     /* TRUE = fit-to-window */
+    double                last_mouse_x;
+    double                last_mouse_y;
+    double                drag_start_pan_x;
+    double                drag_start_pan_y;
+    double                draw_start_x;
+    double                draw_start_y;
+    MiimeNavCallback      nav_cb;
+    gpointer              nav_data;
+    MiimeToolState       *tool_state;   /* borrowed */
+    MiimeAnnotationStack *annot_stack;  /* borrowed */
 };
+
+static void widget_to_image(MiimeCanvas *c, double wx, double wy,
+                            double *ix, double *iy) {
+    if (c->zoom <= 0.0) {
+        *ix = 0; *iy = 0;
+        return;
+    }
+    *ix = (wx - c->pan_x) / c->zoom;
+    *iy = (wy - c->pan_y) / c->zoom;
+}
 
 static void canvas_draw_cb(GtkDrawingArea *area, cairo_t *cr,
                            int width, int height, gpointer user_data) {
@@ -42,10 +56,14 @@ static void canvas_draw_cb(GtkDrawingArea *area, cairo_t *cr,
             zoom = (sx < sy) ? sx : sy;
             px = (width  - img_w * zoom) / 2.0;
             py = (height - img_h * zoom) / 2.0;
+            c->zoom = zoom;
+            c->pan_x = px;
+            c->pan_y = py;
         }
     }
 
-    miime_render_on_screen(cr, c->image, zoom, px, py, width, height);
+    const MiimeAnnotation *preview = c->tool_state ? miime_tool_get_preview(c->tool_state) : NULL;
+    miime_render_on_screen(cr, c->image, c->annot_stack, preview, zoom, px, py, width, height);
 }
 
 static gboolean canvas_scroll_cb(GtkEventControllerScroll *ctrl,
@@ -58,17 +76,6 @@ static gboolean canvas_scroll_cb(GtkEventControllerScroll *ctrl,
     if (!c->image) return FALSE;
 
     if (c->fit_mode) {
-        int widget_w = gtk_widget_get_width(c->drawing_area);
-        int widget_h = gtk_widget_get_height(c->drawing_area);
-        int img_w = miime_image_width(c->image);
-        int img_h = miime_image_height(c->image);
-        if (img_w > 0 && img_h > 0) {
-            double sx = (double)widget_w / img_w;
-            double sy = (double)widget_h / img_h;
-            c->zoom = (sx < sy) ? sx : sy;
-            c->pan_x = (widget_w - img_w * c->zoom) / 2.0;
-            c->pan_y = (widget_h - img_h * c->zoom) / 2.0;
-        }
         c->fit_mode = FALSE;
     }
 
@@ -98,9 +105,9 @@ static void canvas_motion_cb(GtkEventControllerMotion *ctrl,
     c->last_mouse_y = y;
 }
 
-static void canvas_drag_begin_cb(GtkGestureDrag *gesture,
-                                 double x, double y,
-                                 gpointer user_data) {
+static void canvas_pan_drag_begin_cb(GtkGestureDrag *gesture,
+                                     double x, double y,
+                                     gpointer user_data) {
     MiimeCanvas *c = (MiimeCanvas *)user_data;
     guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
     (void)x; (void)y;
@@ -108,17 +115,6 @@ static void canvas_drag_begin_cb(GtkGestureDrag *gesture,
     if (button != 2 && button != 3) return;
 
     if (c->fit_mode) {
-        int widget_w = gtk_widget_get_width(c->drawing_area);
-        int widget_h = gtk_widget_get_height(c->drawing_area);
-        int img_w = miime_image_width(c->image);
-        int img_h = miime_image_height(c->image);
-        if (img_w > 0 && img_h > 0) {
-            double sx = (double)widget_w / img_w;
-            double sy = (double)widget_h / img_h;
-            c->zoom = (sx < sy) ? sx : sy;
-            c->pan_x = (widget_w - img_w * c->zoom) / 2.0;
-            c->pan_y = (widget_h - img_h * c->zoom) / 2.0;
-        }
         c->fit_mode = FALSE;
     }
 
@@ -126,9 +122,9 @@ static void canvas_drag_begin_cb(GtkGestureDrag *gesture,
     c->drag_start_pan_y = c->pan_y;
 }
 
-static void canvas_drag_update_cb(GtkGestureDrag *gesture,
-                                  double offset_x, double offset_y,
-                                  gpointer user_data) {
+static void canvas_pan_drag_update_cb(GtkGestureDrag *gesture,
+                                      double offset_x, double offset_y,
+                                      gpointer user_data) {
     MiimeCanvas *c = (MiimeCanvas *)user_data;
     guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
 
@@ -139,12 +135,61 @@ static void canvas_drag_update_cb(GtkGestureDrag *gesture,
     gtk_widget_queue_draw(c->drawing_area);
 }
 
+static void canvas_draw_drag_begin_cb(GtkGestureDrag *gesture,
+                                      double start_x, double start_y,
+                                      gpointer user_data) {
+    MiimeCanvas *c = (MiimeCanvas *)user_data;
+    guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+
+    if (button != 1 || !c->image || !c->tool_state) return;
+
+    c->draw_start_x = start_x;
+    c->draw_start_y = start_y;
+
+    double ix, iy;
+    widget_to_image(c, start_x, start_y, &ix, &iy);
+    miime_tool_on_press(c->tool_state, ix, iy, c->annot_stack);
+    gtk_widget_queue_draw(c->drawing_area);
+}
+
+static void canvas_draw_drag_update_cb(GtkGestureDrag *gesture,
+                                       double offset_x, double offset_y,
+                                       gpointer user_data) {
+    MiimeCanvas *c = (MiimeCanvas *)user_data;
+    guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+
+    if (button != 1 || !c->image || !c->tool_state) return;
+
+    double wx = c->draw_start_x + offset_x;
+    double wy = c->draw_start_y + offset_y;
+    double ix, iy;
+    widget_to_image(c, wx, wy, &ix, &iy);
+    miime_tool_on_drag(c->tool_state, ix, iy);
+    gtk_widget_queue_draw(c->drawing_area);
+}
+
+static void canvas_draw_drag_end_cb(GtkGestureDrag *gesture,
+                                    double offset_x, double offset_y,
+                                    gpointer user_data) {
+    MiimeCanvas *c = (MiimeCanvas *)user_data;
+    guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+
+    if (button != 1 || !c->image || !c->tool_state) return;
+
+    double wx = c->draw_start_x + offset_x;
+    double wy = c->draw_start_y + offset_y;
+    double ix, iy;
+    widget_to_image(c, wx, wy, &ix, &iy);
+    miime_tool_on_release(c->tool_state, ix, iy, c->annot_stack);
+    gtk_widget_queue_draw(c->drawing_area);
+}
+
 static gboolean canvas_key_cb(GtkEventControllerKey *ctrl,
                               guint keyval, guint keycode,
                               GdkModifierType state,
                               gpointer user_data) {
     MiimeCanvas *c = (MiimeCanvas *)user_data;
-    (void)ctrl; (void)keycode; (void)state;
+    (void)ctrl; (void)keycode;
 
     if (keyval == GDK_KEY_1) {
         if (c->fit_mode) {
@@ -160,6 +205,18 @@ static gboolean canvas_key_cb(GtkEventControllerKey *ctrl,
             c->fit_mode = TRUE;
         }
         gtk_widget_queue_draw(c->drawing_area);
+        return TRUE;
+    }
+
+    if ((keyval == GDK_KEY_z || keyval == GDK_KEY_Z) && (state & GDK_CONTROL_MASK)) {
+        if (c->annot_stack) {
+            if (state & GDK_SHIFT_MASK) {
+                miime_annot_stack_redo(c->annot_stack);
+            } else {
+                miime_annot_stack_undo(c->annot_stack);
+            }
+            gtk_widget_queue_draw(c->drawing_area);
+        }
         return TRUE;
     }
 
@@ -188,17 +245,21 @@ MiimeCanvas *miime_canvas_new(void) {
     MiimeCanvas *c = malloc(sizeof(MiimeCanvas));
     if (!c) return NULL;
 
-    c->image    = NULL;
-    c->zoom     = 1.0;
-    c->pan_x    = 0.0;
-    c->pan_y    = 0.0;
-    c->fit_mode = TRUE;
+    c->image        = NULL;
+    c->zoom         = 1.0;
+    c->pan_x        = 0.0;
+    c->pan_y        = 0.0;
+    c->fit_mode     = TRUE;
     c->last_mouse_x = 0.0;
     c->last_mouse_y = 0.0;
     c->drag_start_pan_x = 0.0;
     c->drag_start_pan_y = 0.0;
-    c->nav_cb   = NULL;
-    c->nav_data = NULL;
+    c->draw_start_x = 0.0;
+    c->draw_start_y = 0.0;
+    c->nav_cb       = NULL;
+    c->nav_data     = NULL;
+    c->tool_state   = NULL;
+    c->annot_stack  = NULL;
 
     c->drawing_area = gtk_drawing_area_new();
     gtk_widget_set_hexpand(c->drawing_area, TRUE);
@@ -219,12 +280,20 @@ MiimeCanvas *miime_canvas_new(void) {
     g_signal_connect(motion, "motion", G_CALLBACK(canvas_motion_cb), c);
     gtk_widget_add_controller(c->drawing_area, motion);
 
+    /* Drag gesture for drawing (left button) */
+    GtkGesture *draw_drag = gtk_gesture_drag_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(draw_drag), 1);
+    g_signal_connect(draw_drag, "drag-begin", G_CALLBACK(canvas_draw_drag_begin_cb), c);
+    g_signal_connect(draw_drag, "drag-update", G_CALLBACK(canvas_draw_drag_update_cb), c);
+    g_signal_connect(draw_drag, "drag-end", G_CALLBACK(canvas_draw_drag_end_cb), c);
+    gtk_widget_add_controller(c->drawing_area, GTK_EVENT_CONTROLLER(draw_drag));
+
     /* Drag gesture for panning (middle or right button) */
-    GtkGesture *drag = gtk_gesture_drag_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), 0); /* accept any button */
-    g_signal_connect(drag, "drag-begin", G_CALLBACK(canvas_drag_begin_cb), c);
-    g_signal_connect(drag, "drag-update", G_CALLBACK(canvas_drag_update_cb), c);
-    gtk_widget_add_controller(c->drawing_area, GTK_EVENT_CONTROLLER(drag));
+    GtkGesture *pan_drag = gtk_gesture_drag_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(pan_drag), 0);
+    g_signal_connect(pan_drag, "drag-begin", G_CALLBACK(canvas_pan_drag_begin_cb), c);
+    g_signal_connect(pan_drag, "drag-update", G_CALLBACK(canvas_pan_drag_update_cb), c);
+    gtk_widget_add_controller(c->drawing_area, GTK_EVENT_CONTROLLER(pan_drag));
 
     /* Key controller for shortcuts */
     GtkEventController *key = gtk_event_controller_key_new();
@@ -255,4 +324,14 @@ void miime_canvas_set_nav_callback(MiimeCanvas *c, MiimeNavCallback cb, gpointer
     if (!c) return;
     c->nav_cb = cb;
     c->nav_data = data;
+}
+
+void miime_canvas_set_tool_state(MiimeCanvas *c, MiimeToolState *ts) {
+    if (!c) return;
+    c->tool_state = ts;
+}
+
+void miime_canvas_set_annot_stack(MiimeCanvas *c, MiimeAnnotationStack *stack) {
+    if (!c) return;
+    c->annot_stack = stack;
 }

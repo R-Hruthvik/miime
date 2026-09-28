@@ -3,6 +3,8 @@
 
 #include <gtk/gtk.h>
 #include "image.h"
+#include "annotate.h"
+#include "tools.h"
 
 typedef struct MiimeCanvas MiimeCanvas;
 typedef void (*MiimeNavCallback)(int direction, gpointer user_data);
@@ -21,5 +23,9 @@ GtkWidget *miime_canvas_get_widget(MiimeCanvas *c);
 
 /* Register navigation callback (triggered on Space/Backspace). */
 void miime_canvas_set_nav_callback(MiimeCanvas *c, MiimeNavCallback cb, gpointer data);
+
+/* Set tools and annotation stack (borrowed from window). */
+void miime_canvas_set_tool_state(MiimeCanvas *c, MiimeToolState *ts);
+void miime_canvas_set_annot_stack(MiimeCanvas *c, MiimeAnnotationStack *stack);
 
 #endif /* MIIME_CANVAS_H */

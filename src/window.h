@@ -3,6 +3,8 @@
 
 #include <gtk/gtk.h>
 #include "canvas.h"
+#include "tools.h"
+#include "annotate.h"
 
 typedef struct MiimeWindow MiimeWindow;
 
@@ -17,5 +19,11 @@ GtkWidget *miime_window_get_widget(MiimeWindow *win);
 
 /* Get the embedded canvas. */
 MiimeCanvas *miime_window_get_canvas(MiimeWindow *win);
+
+/* Get tool state. */
+MiimeToolState *miime_window_get_tool_state(MiimeWindow *win);
+
+/* Get annotation stack. */
+MiimeAnnotationStack *miime_window_get_annot_stack(MiimeWindow *win);
 
 #endif /* MIIME_WINDOW_H */
