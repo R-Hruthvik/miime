@@ -1,6 +1,36 @@
+# Build outputs
+build/
+bin/
+obj/
+dist/
+out/
+
+# Object files
 *.o
+*.a
+*.so
+*.so.*
+*.dylib
+
+# Binaries
 miime
 tests/test_image
 tests/test_annotate
 tests/test_render
+tests/test_tools
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Tooling / scratch
 .superpowers/
+*.log
