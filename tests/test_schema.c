@@ -5,6 +5,55 @@
 #include <string.h>
 
 int main(void) {
+    MiimeStyleConfig cfg = {0};
+    cfg.drawing_style = MIIME_DRAW_EDITORIAL; cfg.has_drawing_style = TRUE;
+    cfg.theme = MIIME_THEME_AUTO; cfg.has_theme = TRUE;
+    cfg.analysis_background_rgba = 0xABCDEFff; cfg.has_analysis_background = TRUE;
+    char *cfg_json = miime_schema_serialize_render_config(&cfg);
+    assert(cfg_json && strcmp(cfg_json, "{\"drawing_style\":\"editorial\",\"theme\":\"auto\",\"analysis_background\":\"#ABCDEF\"}") == 0);
+    MiimeStyleConfig cfg2 = {0}; GError *cfg_err = NULL;
+    assert(miime_schema_deserialize_render_config(cfg_json, &cfg2, &cfg_err) && cfg_err == NULL);
+    assert(cfg2.has_drawing_style && cfg2.drawing_style == MIIME_DRAW_EDITORIAL && cfg2.has_theme && cfg2.theme == MIIME_THEME_AUTO);
+    assert(cfg2.has_analysis_background && cfg2.analysis_background_rgba == 0xABCDEFFF);
+    g_free(cfg_json);
+    MiimeStyleConfig alias_only={0};
+    assert(miime_schema_deserialize_render_config("{\"aesthetic_style\":\"clean_technical\"}",&alias_only,NULL));
+    assert(alias_only.has_aesthetic_style && !alias_only.has_drawing_style && !alias_only.has_theme);
+    const char *bad_config[] = {"{\"drawing_style\":\"scribble\"}", "{\"theme\":false}", "{\"analysis_background\":\"#11223344\"}", "{\"analysis_background\":\"#gg2233\"}", "{\"reset_render_config\":\"true\"}"};
+    for (guint i=0; i<G_N_ELEMENTS(bad_config); i++) {
+        MiimeStyleConfig unchanged = {0}; unchanged.theme = MIIME_THEME_WARM; unchanged.has_theme = TRUE;
+        cfg_err = NULL;
+        assert(!miime_schema_deserialize_render_config(bad_config[i], &unchanged, &cfg_err));
+        assert(cfg_err && unchanged.theme == MIIME_THEME_WARM && unchanged.has_theme);
+        g_error_free(cfg_err);
+    }
+    MiimeAnnotationStack *presence = miime_schema_deserialize("{\"annotations\":[{\"font_size\":0,\"color\":[0,0,0,0],\"role\":\"info\",\"label_surface\":[0,0.5,1,1]}]}", NULL);
+    assert(presence && miime_annot_stack_get(presence,0)->has_font_size && miime_annot_stack_get(presence,0)->font_size==0);
+    assert(miime_annot_stack_get(presence,0)->has_color && miime_annot_stack_get(presence,0)->has_role && miime_annot_stack_get(presence,0)->role==MIIME_ROLE_INFO);
+    assert(miime_annot_stack_get(presence,0)->has_label_surface);
+    MiimeStyleConfig active = {0}; active.has_theme=TRUE; active.theme=MIIME_THEME_LIGHT;
+    char *opt_json = miime_schema_serialize_with_config(presence, &active);
+    assert(opt_json && strstr(opt_json,"\"role\":\"info\"") && strstr(opt_json,"\"font_size\":0") && strstr(opt_json,"\"color\":[0,0,0,0]"));
+    MiimeAnnotationStack *presence2=miime_schema_deserialize(opt_json,NULL);
+    assert(presence2 && miime_annot_stack_get(presence2,0)->has_font_size && miime_annot_stack_get(presence2,0)->font_size==0);
+    g_free(opt_json); miime_annot_stack_free(presence); miime_annot_stack_free(presence2);
+    MiimeAnnotationStack *automatic=miime_schema_deserialize("{\"annotations\":[{\"type\":\"text\",\"text\":\"auto\"}]}",NULL);
+    char *auto1=miime_schema_serialize_with_config(automatic,&active);
+    MiimeAnnotationStack *automatic2=miime_schema_deserialize(auto1,NULL);
+    char *auto2=miime_schema_serialize_with_config(automatic2,&active);
+    assert(auto1 && auto2 && strstr(auto1,"\"color\"")==NULL && strstr(auto1,"\"font_size\"")==NULL && strstr(auto1,"\"stroke_width\"")==NULL);
+    assert(strstr(auto2,"\"color\"")==NULL && strstr(auto2,"\"font_size\"")==NULL && strstr(auto2,"\"stroke_width\"")==NULL);
+    g_free(auto1); g_free(auto2); miime_annot_stack_free(automatic); miime_annot_stack_free(automatic2);
+    static const char *role_names[]={"none","error","warning","info"};
+    for(guint i=0;i<G_N_ELEMENTS(role_names);i++) {
+        char *role_input=g_strdup_printf("{\"annotations\":[{\"role\":\"%s\"}]}",role_names[i]);
+        MiimeAnnotationStack *rs=miime_schema_deserialize(role_input,NULL);
+        char *rout=miime_schema_serialize(rs);
+        assert(rs && miime_annot_stack_get(rs,0)->has_role && miime_annot_stack_get(rs,0)->role==(MiimeSemanticRole)i);
+        assert(rout && strstr(rout,role_names[i]));
+        g_free(role_input); g_free(rout); miime_annot_stack_free(rs);
+    }
+
     const char *bad_widths[] = {
         "{\"annotations\":[{\"stroke_width\":\"wide\"}]}",
         "{\"annotations\":[{\"stroke_width\":[1]}]}",

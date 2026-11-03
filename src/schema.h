@@ -6,6 +6,12 @@
 
 /* Serialize an annotation stack to a JSON string (caller frees with g_free). */
 char *miime_schema_serialize(const MiimeAnnotationStack *stack);
+char *miime_schema_serialize_render_config(const MiimeStyleConfig *config);
+char *miime_schema_serialize_with_config(const MiimeAnnotationStack *stack,
+                                         const MiimeStyleConfig *config);
+gboolean miime_schema_deserialize_render_config(const char *json,
+                                                MiimeStyleConfig *out,
+                                                GError **error);
 
 /* Deserialize a JSON string into a new annotation stack. Returns NULL on error. */
 MiimeAnnotationStack *miime_schema_deserialize(const char *json, GError **error);

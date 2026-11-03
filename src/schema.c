@@ -355,6 +355,64 @@ static void set_schema_error(GError **error, int code, const char *message) {
     if (error && !*error) *error = g_error_new_literal(schema_error_quark(), code, message);
 }
 
+static const char *const drawing_styles[] = {"technical","sketch","editorial","minimal"};
+static const char *const themes[] = {"auto","light","dark","warm","neutral"};
+static const char *const roles[] = {"none","error","warning","info"};
+
+static gboolean parse_config_value(JVal *root, MiimeStyleConfig *out, GError **error) {
+    if (!root || root->type != J_OBJ) { set_schema_error(error, 20, "render config must be a JSON object"); return FALSE; }
+    MiimeStyleConfig tmp = {0};
+    JVal *v = jget(root, "drawing_style");
+    if (v) { if (!enum_valid(v,drawing_styles,4)) goto invalid; tmp.drawing_style=enum_value(v,drawing_styles,4,0); tmp.has_drawing_style=TRUE; }
+    v = jget(root, "theme");
+    if (v) { if (!enum_valid(v,themes,5)) goto invalid; tmp.theme=enum_value(v,themes,5,0); tmp.has_theme=TRUE; }
+    v = jget(root, "analysis_background");
+    if (v) {
+        if (v->type != J_STR || strlen(v->str) != 7 || v->str[0] != '#') goto invalid;
+        guint32 rgb=0;
+        for (int i=1;i<7;i++) { int d=g_ascii_xdigit_value(v->str[i]); if (d<0) goto invalid; rgb=(rgb<<4)|(guint32)d; }
+        tmp.analysis_background_rgba=(rgb<<8)|0xff; tmp.has_analysis_background=TRUE;
+    }
+    v = jget(root, "aesthetic_style");
+    if (v) {
+        static const char *const aesthetics[]={"rough_sketch","clean_technical"};
+        if (!enum_valid(v,aesthetics,2)) goto invalid;
+        tmp.aesthetic_style=enum_value(v,aesthetics,2,0); tmp.has_aesthetic_style=TRUE;
+    }
+    v = jget(root, "reset_render_config");
+    if (v) { if (v->type != J_BOOL) goto invalid; tmp.has_reset_render_config=TRUE; tmp.reset_render_config=v->boolean; }
+    *out=tmp;
+    return TRUE;
+invalid:
+    set_schema_error(error, 21, "invalid render config field");
+    return FALSE;
+}
+
+gboolean miime_schema_deserialize_render_config(const char *json, MiimeStyleConfig *out, GError **error) {
+    if (!out) { set_schema_error(error,20,"output config is required"); return FALSE; }
+    JVal *root=NULL;
+    if (!parse_complete_json(json,&root)) { set_schema_error(error,2,"invalid render config JSON"); return FALSE; }
+    MiimeStyleConfig tmp={0};
+    gboolean ok=parse_config_value(root,&tmp,error);
+    jfree(root);
+    if (ok) *out=tmp;
+    return ok;
+}
+
+char *miime_schema_serialize_render_config(const MiimeStyleConfig *config) {
+    GString *g=g_string_new("{"); gboolean comma=FALSE;
+    if (config) {
+        if (config->has_drawing_style && enum_name(config->drawing_style,drawing_styles,4)) { g_string_append_printf(g,"\"drawing_style\":\"%s\"",enum_name(config->drawing_style,drawing_styles,4)); comma=TRUE; }
+        if (config->has_theme && enum_name(config->theme,themes,5)) { if(comma)g_string_append_c(g,','); g_string_append_printf(g,"\"theme\":\"%s\"",enum_name(config->theme,themes,5)); comma=TRUE; }
+        if (config->has_analysis_background) { if(comma)g_string_append_c(g,','); g_string_append_printf(g,"\"analysis_background\":\"#%06X\"",(unsigned)(config->analysis_background_rgba>>8)&0xffffff); comma=TRUE; }
+        if (config->has_aesthetic_style && config->aesthetic_style>=MIIME_AESTHETIC_ROUGH_SKETCH && config->aesthetic_style<=MIIME_AESTHETIC_CLEAN_TECHNICAL) {
+            if(comma)g_string_append_c(g,',');
+            g_string_append_printf(g,"\"aesthetic_style\":\"%s\"",config->aesthetic_style==MIIME_AESTHETIC_ROUGH_SKETCH?"rough_sketch":"clean_technical");
+        }
+    }
+    g_string_append_c(g,'}'); return g_string_free(g,FALSE);
+}
+
 static gboolean annotation_needs_target_points(const MiimeAnnotation *a) {
     return a->point_count == 0 ||
         (a->point_count == 2 && a->points[0] == 0.0 && a->points[1] == 0.0);
@@ -474,6 +532,7 @@ MiimeAnnotationStack *miime_schema_deserialize_ex(const char *json, GError **err
             }
             JVal *col = jget(o, "color");
             if (col && col->type == J_ARR && col->count >= 4) {
+                a.has_color=TRUE;
                 if (col->items[0]->type == J_NUM) a.color_r = col->items[0]->num;
                 if (col->items[1]->type == J_NUM) a.color_g = col->items[1]->num;
                 if (col->items[2]->type == J_NUM) a.color_b = col->items[2]->num;
@@ -566,7 +625,18 @@ MiimeAnnotationStack *miime_schema_deserialize_ex(const char *json, GError **err
             JVal *txt = jget(o, "text");
             if (txt && txt->type == J_STR) bounded_utf8_copy(a.text, sizeof(a.text), txt->str);
             JVal *fs = jget(o, "font_size");
-            if (fs && fs->type == J_NUM) a.font_size = fs->num;
+            if (fs && fs->type == J_NUM) { a.font_size = fs->num; a.has_font_size=TRUE; }
+            v=jget(o,"role"); if (v) {
+                if (!enum_valid(v,roles,4)) { miime_annot_stack_free(stack); jfree(root); set_schema_error(error,22,"role must be none, error, warning, or info"); return NULL; }
+                a.role=enum_value(v,roles,4,0); a.has_role=TRUE;
+            }
+            v=jget(o,"label_surface"); if (v) {
+                gboolean valid=v->type==J_ARR && v->count==4;
+                for(int k=0;valid && k<4;k++) valid=v->items[k]->type==J_NUM && isfinite(v->items[k]->num) && v->items[k]->num>=0 && v->items[k]->num<=1;
+                if (!valid) { miime_annot_stack_free(stack); jfree(root); set_schema_error(error,23,"label_surface must be four finite RGBA channels in [0,1]"); return NULL; }
+                for(int k=0;k<4;k++) a.label_surface_rgba[k]=v->items[k]->num;
+                a.has_label_surface=TRUE;
+            }
             miime_annot_stack_push(stack, a);
         }
     }
@@ -586,14 +656,21 @@ gboolean miime_schema_validate(const char *json, GError **error) {
     return TRUE;
 }
 
-char *miime_schema_serialize(const MiimeAnnotationStack *stack) {
+static char *serialize_annotations(const MiimeAnnotationStack *stack, const MiimeStyleConfig *config) {
     static const char *const inks[] = {"thin","regular","bold","marker"};
     static const char *const dashes[] = {"solid","dashed","dotted"};
     static const char *const fills[] = {"none","hachure","solid"};
     static const char *const arrows[] = {"none","start","end","both"};
     static const char *const zs[] = {"under","normal","over"};
     static const char *const leaders[] = {"curved","elbow","none"};
-    GString *g = g_string_new("{\"annotations\":[");
+    gboolean themed=config && (config->has_drawing_style || config->has_theme);
+    GString *g = g_string_new("{");
+    if(config) {
+        char *cfg=miime_schema_serialize_render_config(config);
+        if(cfg && strcmp(cfg,"{}")!=0) { g_string_append_len(g,cfg+1,strlen(cfg)-2); g_string_append_c(g,','); }
+        g_free(cfg);
+    }
+    g_string_append(g,"\"annotations\":[");
     if (stack) {
         int count = miime_annot_stack_count(stack);
         for (int i = 0; i < count; i++) {
@@ -607,12 +684,17 @@ char *miime_schema_serialize(const MiimeAnnotationStack *stack) {
                 if (k > 0) g_string_append_c(g, ',');
                 g_string_append_printf(g, "%.6g", a->points[k]);
             }
-            g_string_append_printf(g, "],\"color\":[%.6g,%.6g,%.6g,%.6g],\"stroke_width\":",
-                                  a->color_r, a->color_g, a->color_b, a->color_a);
-            if (a->has_stroke_width_pair) g_string_append_printf(g,"[%.6g,%.6g]",a->stroke_width,a->stroke_width_end);
-            else g_string_append_printf(g,"%.6g",a->stroke_width);
+            g_string_append_c(g,']');
+            if(!themed || a->has_color) g_string_append_printf(g, ",\"color\":[%.6g,%.6g,%.6g,%.6g]",a->color_r,a->color_g,a->color_b,a->color_a);
+            if(!themed || a->has_stroke_width) {
+                g_string_append(g,",\"stroke_width\":");
+                if (a->has_stroke_width_pair) g_string_append_printf(g,"[%.6g,%.6g]",a->stroke_width,a->stroke_width_end);
+                else g_string_append_printf(g,"%.6g",a->stroke_width);
+            }
             g_string_append(g, ",\"text\":"); append_json_string(g, a->text);
-            g_string_append_printf(g, ",\"font_size\":%.6g", a->font_size);
+            if(!themed || a->has_font_size) g_string_append_printf(g, ",\"font_size\":%.6g", a->font_size);
+            if(a->has_role && enum_name(a->role,roles,4)) g_string_append_printf(g, ",\"role\":\"%s\"",enum_name(a->role,roles,4));
+            if(a->has_label_surface) g_string_append_printf(g, ",\"label_surface\":[%.6g,%.6g,%.6g,%.6g]",a->label_surface_rgba[0],a->label_surface_rgba[1],a->label_surface_rgba[2],a->label_surface_rgba[3]);
             if (a->has_ink && enum_name(a->ink,inks,4)) g_string_append_printf(g, ",\"ink\":\"%s\"", enum_name(a->ink,inks,4));
             if (a->has_dash && enum_name(a->dash,dashes,3)) g_string_append_printf(g, ",\"dash\":\"%s\"", enum_name(a->dash,dashes,3));
             if (a->has_fill && enum_name(a->fill,fills,3)) g_string_append_printf(g, ",\"fill\":\"%s\"", enum_name(a->fill,fills,3));
@@ -643,4 +725,10 @@ char *miime_schema_serialize(const MiimeAnnotationStack *stack) {
     char *out = g_strdup(g->str);
     g_string_free(g, TRUE);
     return out;
+}
+
+char *miime_schema_serialize(const MiimeAnnotationStack *stack) { return serialize_annotations(stack,NULL); }
+char *miime_schema_serialize_with_config(const MiimeAnnotationStack *stack, const MiimeStyleConfig *config) {
+    if(!config || (!config->has_drawing_style && !config->has_theme && !config->has_analysis_background)) return miime_schema_serialize(stack);
+    return serialize_annotations(stack,config);
 }

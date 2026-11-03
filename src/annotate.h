@@ -44,6 +44,19 @@ typedef enum {
     MIIME_INK_MARKER
 } MiimeInk;
 
+typedef enum { MIIME_DRAW_TECHNICAL, MIIME_DRAW_SKETCH, MIIME_DRAW_EDITORIAL, MIIME_DRAW_MINIMAL } MiimeDrawingStyle;
+typedef enum { MIIME_THEME_AUTO, MIIME_THEME_LIGHT, MIIME_THEME_DARK, MIIME_THEME_WARM, MIIME_THEME_NEUTRAL } MiimeTheme;
+typedef enum { MIIME_ROLE_NONE, MIIME_ROLE_ERROR, MIIME_ROLE_WARNING, MIIME_ROLE_INFO } MiimeSemanticRole;
+typedef struct {
+    MiimeDrawingStyle drawing_style;
+    MiimeTheme theme;
+    guint32 analysis_background_rgba;
+    gboolean has_drawing_style, has_theme, has_analysis_background;
+    /* Retained request provenance for the MCP/state layer. */
+    MiimeAestheticStyle aesthetic_style;
+    gboolean has_aesthetic_style, has_reset_render_config, reset_render_config;
+} MiimeStyleConfig;
+
 /* Backward-compatible aliases. */
 #define MIIME_ANNOT_SOURCE_HUMAN MIIME_SOURCE_HUMAN
 #define MIIME_ANNOT_SOURCE_AGENT MIIME_SOURCE_AGENT
@@ -61,6 +74,8 @@ typedef struct {
     double points[MIIME_MAX_POINTS]; /* x0,y0,x1,y1,... in image coordinates */
     int    point_count;              /* number of doubles used (pairs * 2) */
     double color_r, color_g, color_b, color_a;
+    MiimeSemanticRole role;
+    double label_surface_rgba[4];
     double stroke_width;
     char   text[256];                /* for MIIME_ANNOT_TEXT */
     double font_size;                /* for MIIME_ANNOT_TEXT */
@@ -83,6 +98,7 @@ typedef struct {
     gboolean has_som_id, has_ink, has_fill, has_dash, has_fill_color;
     gboolean has_stroke_width, has_stroke_width_pair, has_radius, has_arrow, has_z;
     gboolean has_label, has_label_anchor, has_label_leader;
+    gboolean has_color, has_font_size, has_role, has_label_surface;
 } MiimeAnnotation;
 
 typedef struct MiimeAnnotationStack MiimeAnnotationStack;
