@@ -1,4 +1,6 @@
 #include "render.h"
+#include "freehand.h"
+#include "layout.h"
 #include <math.h>
 #include <string.h>
 #include <pango/pangocairo.h>
@@ -7,55 +9,422 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolean is_preview) {
+static MiimeAestheticStyle g_aesthetic = MIIME_AESTHETIC_ROUGH_SKETCH;
+
+void miime_render_set_aesthetic(MiimeAestheticStyle style) { g_aesthetic = style; }
+MiimeAestheticStyle miime_render_get_aesthetic(void) { return g_aesthetic; }
+
+static gboolean annotation_has_fill(const MiimeAnnotation *a) {
+    return a->has_fill && a->fill != 0;
+}
+
+static void set_annotation_fill_source(cairo_t *cr, const MiimeAnnotation *a) {
+    if (a->has_fill_color) {
+        cairo_set_source_rgba(cr, a->fill_r, a->fill_g, a->fill_b, a->fill_a);
+    } else {
+        cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, a->color_a * 0.25);
+    }
+}
+
+static void render_rect_fill(cairo_t *cr, const MiimeAnnotation *a,
+                             MiimeSketchRng *rng, double x, double y,
+                             double w, double h, double radius, int rough) {
+    if (!annotation_has_fill(a)) return;
+    cairo_save(cr);
+    miime_sketch_rounded_rect(cr, rng, x, y, w, h, radius, 0);
+    cairo_clip(cr);
+    set_annotation_fill_source(cr, a);
+    if (a->fill == 2) {
+        miime_sketch_rounded_rect(cr, rng, x, y, w, h, radius, rough);
+        cairo_fill(cr);
+    } else if (a->fill == 1) {
+        MiimeSketchRng fill_rng = *rng;
+        miime_sketch_hachure(cr, &fill_rng, x, y, w, h);
+    }
+    cairo_restore(cr);
+}
+
+static void render_ellipse_fill(cairo_t *cr, const MiimeAnnotation *a,
+                                MiimeSketchRng *rng, double cx, double cy,
+                                double rx, double ry, int rough) {
+    if (!annotation_has_fill(a)) return;
+    cairo_save(cr);
+    miime_sketch_ellipse(cr, rng, cx, cy, rx, ry, 0);
+    cairo_clip(cr);
+    set_annotation_fill_source(cr, a);
+    if (a->fill == 2) {
+        miime_sketch_ellipse(cr, rng, cx, cy, rx, ry, rough);
+        cairo_fill(cr);
+    } else if (a->fill == 1) {
+        MiimeSketchRng fill_rng = *rng;
+        miime_sketch_hachure(cr, &fill_rng, cx-rx, cy-ry, 2*rx, 2*ry);
+    }
+    cairo_restore(cr);
+}
+
+/* Callouts inset the bubble 15% on each side, sizing it to 70% of the target.
+ * Pick the closest target edge midpoint to the bubble center; equal distances
+ * resolve in top, left, right, bottom order. */
+static void callout_path(cairo_t *cr, MiimeSketchRng *rng,
+                         double x, double y, double w, double h,
+                         double radius, int rough) {
+    double bubble_x = x + w * 0.15;
+    double bubble_y = y + h * 0.15;
+    double bubble_w = w * 0.7;
+    double bubble_h = h * 0.7;
+    double cx = x + w * 0.5, cy = y + h * 0.5;
+    double bubble_cy = bubble_y + bubble_h * 0.5;
+    double ports[4][2] = {{cx, y}, {x, cy}, {x + w, cy}, {cx, y + h}};
+    int nearest = 0;
+    double best = HUGE_VAL;
+    for (int i = 0; i < 4; i++) {
+        double distance = hypot(ports[i][0] - cx, ports[i][1] - bubble_cy);
+        if (distance < best) { best = distance; nearest = i; }
+    }
+    miime_sketch_rounded_rect(cr, rng, bubble_x, bubble_y, bubble_w, bubble_h, radius, rough);
+    if (nearest == 0 || nearest == 3) {
+        double base_y = nearest == 0 ? bubble_y : bubble_y + bubble_h;
+        double half_base = fmin(8.0, bubble_w * 0.3);
+        cairo_move_to(cr, cx - half_base, base_y);
+        cairo_line_to(cr, ports[nearest][0], ports[nearest][1]);
+        cairo_line_to(cr, cx + half_base, base_y);
+    } else {
+        double base_x = nearest == 1 ? bubble_x : bubble_x + bubble_w;
+        double half_base = fmin(8.0, bubble_h * 0.3);
+        cairo_move_to(cr, base_x, bubble_cy - half_base);
+        cairo_line_to(cr, ports[nearest][0], ports[nearest][1]);
+        cairo_line_to(cr, base_x, bubble_cy + half_base);
+    }
+    cairo_close_path(cr);
+}
+
+static void render_callout(cairo_t *cr, const MiimeAnnotation *a,
+                           MiimeSketchRng *rng, double x, double y,
+                           double w, double h, int rough, double width,
+                           double alpha) {
+    if (w <= 0.0 || h <= 0.0) return;
+    double radius = a->has_radius ? a->radius : 12.0;
+    int fill = a->has_fill ? a->fill : 2;
+    if (fill != 0) {
+        cairo_save(cr);
+        callout_path(cr, rng, x, y, w, h, radius, 0);
+        cairo_clip(cr);
+        set_annotation_fill_source(cr, a);
+        if (fill == 2) {
+            callout_path(cr, rng, x, y, w, h, radius, rough);
+            cairo_fill(cr);
+        } else if (fill == 1) {
+            MiimeSketchRng fill_rng = *rng;
+            miime_sketch_hachure(cr, &fill_rng, x, y, w, h);
+        }
+        cairo_restore(cr);
+    }
+    if (rough) {
+        cairo_save(cr);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.85);
+        cairo_set_line_width(cr, 5.5);
+        callout_path(cr, rng, x, y, w, h, radius, 1);
+        cairo_stroke(cr);
+        cairo_restore(cr);
+        cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, alpha);
+        cairo_set_line_width(cr, width);
+    }
+    callout_path(cr, rng, x, y, w, h, radius, rough);
+    if (a->has_dash && a->dash == 1) { double d[] = {8, 5}; cairo_set_dash(cr, d, 2, 0); }
+    else if (a->has_dash && a->dash == 2) { double d[] = {2, 4}; cairo_set_dash(cr, d, 2, 0); }
+    cairo_stroke(cr);
+    cairo_set_dash(cr, NULL, 0, 0);
+}
+
+static int pin_number_before(const MiimeAnnotationStack *stack, int index) {
+    int number = 1;
+    for (int i = 0; stack && i < index; i++) {
+        const MiimeAnnotation *earlier = miime_annot_stack_get(stack, i);
+        if (earlier && earlier->type == MIIME_ANNOT_PIN) number++;
+    }
+    return number;
+}
+
+static void render_arrow_head(cairo_t *cr, double x, double y, double angle, double width) {
+    double len = fmax(9.0, width * 3.5), spread = 0.48;
+    cairo_move_to(cr, x, y);
+    cairo_line_to(cr, x - len * cos(angle - spread), y - len * sin(angle - spread));
+    cairo_move_to(cr, x, y);
+    cairo_line_to(cr, x - len * cos(angle + spread), y - len * sin(angle + spread));
+}
+
+/* Render a shaft with any supported taper and dash combination. Dashed tapered
+ * shafts are split by arc length and each dash uses the interpolated width. */
+static void render_styled_shaft(cairo_t *cr, MiimeSketchRng *rng,
+                                double x1, double y1, double x2, double y2,
+                                int rough, int dash, int taper,
+                                double start_width, double end_width) {
+    double dx=x2-x1, dy=y2-y1, len=hypot(dx,dy);
+    if (len < 1e-9) return;
+    if (taper && dash == 0) {
+        double pts[]={x1,y1,x2,y2};
+        miime_sketch_var_stroke_taper(cr,rng,pts,4,start_width,end_width,rough);
+        return;
+    }
+    if (!taper || dash == 0) {
+        cairo_set_line_width(cr,start_width);
+        miime_sketch_line_dash(cr,rng,x1,y1,x2,y2,rough,dash);
+        return;
+    }
+    double on=dash==1 ? 8.0 : 2.0, off=dash==1 ? 5.0 : 4.0;
+    for (double pos=0.0; pos<len; pos+=on+off) {
+        double finish=fmin(len,pos+on), mid=(pos+finish)*0.5/len;
+        double width=start_width+(end_width-start_width)*mid;
+        cairo_set_line_width(cr,width);
+        miime_sketch_line(cr,rng,x1+dx*(pos/len),y1+dy*(pos/len),
+                          x1+dx*(finish/len),y1+dy*(finish/len),rough);
+        cairo_stroke(cr);
+    }
+}
+
+static void render_arrow_geometry(cairo_t *cr, MiimeSketchRng *rng,
+                                  double x1, double y1, double x2, double y2,
+                                  int rough, int heads, int dash, int taper,
+                                  double start_width, double end_width) {
+    double angle=atan2(y2-y1,x2-x1);
+    render_styled_shaft(cr,rng,x1,y1,x2,y2,rough,dash,taper,start_width,end_width);
+    if (heads == 1 || heads == 3) {
+        cairo_set_line_width(cr,start_width);
+        render_arrow_head(cr,x1,y1,angle+M_PI,start_width);
+        cairo_stroke(cr);
+    }
+    if (heads == 2 || heads == 3) {
+        cairo_set_line_width(cr,end_width);
+        render_arrow_head(cr,x2,y2,angle,end_width);
+        cairo_stroke(cr);
+    }
+}
+
+static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolean is_preview,
+                                  int pin_number) {
     if (!a) return;
 
-    cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, a->color_a);
-    cairo_set_line_width(cr, a->stroke_width);
-    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    gboolean has_ink = a->has_ink && a->ink >= MIIME_INK_THIN && a->ink <= MIIME_INK_MARKER;
+    gboolean marker = has_ink && a->ink == MIIME_INK_MARKER;
+    static const double ink_widths[] = {1.5, 2.5, 4.0, 14.0};
+    double width = a->stroke_width > 0 ? a->stroke_width : 2.5;
+    if (has_ink && !(a->has_stroke_width || a->has_stroke_width_pair)) width = ink_widths[a->ink];
+    if (a->has_stroke_width || a->has_stroke_width_pair) width = a->stroke_width;
+    double alpha = marker ? a->color_a * 0.35 : a->color_a;
+    int rough = (g_aesthetic == MIIME_AESTHETIC_ROUGH_SKETCH) && !marker;
+
+    MiimeSketchRng rng;
+    char idbuf[64];
+    MiimeAnnotationType rng_type = a->type;
+    if (a->type == MIIME_ANNOT_HIGHLIGHT_BOX) rng_type = MIIME_ANNOT_RECT;
+    else if (a->type == MIIME_ANNOT_SPACING_RULER || a->type == MIIME_ANNOT_ALIGNMENT_REDLINE)
+        rng_type = MIIME_ANNOT_LINE;
+    if (a->json_id[0]) {
+        miime_sketch_rng_init(&rng, a->json_id);
+    } else {
+        snprintf(idbuf, sizeof(idbuf), "annot-%d-%d", (int)rng_type, (int)(a->points[0]*10));
+        miime_sketch_rng_init(&rng, idbuf);
+    }
+
+    cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, alpha);
+    cairo_set_line_width(cr, width);
+    cairo_set_line_cap(cr, marker ? CAIRO_LINE_CAP_SQUARE : CAIRO_LINE_CAP_ROUND);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
 
     switch (a->type) {
         case MIIME_ANNOT_PEN:
             if (a->point_count < 4) break;
-            cairo_move_to(cr, a->points[0], a->points[1]);
-            for (int i = 2; i < a->point_count; i += 2) {
-                cairo_line_to(cr, a->points[i], a->points[i + 1]);
-            }
-            cairo_stroke(cr);
+            if (a->has_stroke_width_pair && a->stroke_width_end > 0)
+                miime_sketch_var_stroke_taper(cr, &rng, a->points, a->point_count, width, a->stroke_width_end, rough);
+            else
+                miime_sketch_var_stroke(cr, &rng, a->points, a->point_count, width, rough);
+            break;
+
+        case MIIME_ANNOT_FREEHAND:
+            if (a->point_count < 4) break;
+            miime_freehand_build_path(cr, &rng, a->points, a->point_count, width,
+                                      a->has_stroke_width_pair ? a->stroke_width_end : 0.0,
+                                      rough);
             break;
 
         case MIIME_ANNOT_LINE:
+        case MIIME_ANNOT_SPACING_RULER:
+        case MIIME_ANNOT_ALIGNMENT_REDLINE:
+        case MIIME_ANNOT_BRACKET:
+        case MIIME_ANNOT_UNDERLINE:
+        case MIIME_ANNOT_STRIKE:
             if (a->point_count < 4) break;
-            cairo_move_to(cr, a->points[0], a->points[1]);
-            cairo_line_to(cr, a->points[2], a->points[3]);
-            cairo_stroke(cr);
+            if (a->type == MIIME_ANNOT_UNDERLINE || a->type == MIIME_ANNOT_STRIKE)
+                cairo_set_line_cap(cr, CAIRO_LINE_CAP_SQUARE);
+            if (rough && a->type != MIIME_ANNOT_BRACKET) {
+                /* halo */
+                cairo_save(cr);
+                cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
+                cairo_set_line_width(cr, 5.5);
+                if (a->type == MIIME_ANNOT_LINE && a->has_arrow && a->arrow != 0)
+                    render_arrow_geometry(cr,&rng,a->points[0],a->points[1],a->points[2],a->points[3],
+                                          1,a->arrow,a->has_dash?a->dash:0,0,5.5,5.5);
+                else
+                    miime_sketch_line(cr, &rng, a->points[0], a->points[1], a->points[2], a->points[3], 1);
+                cairo_stroke(cr);
+                cairo_restore(cr);
+                cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, alpha);
+                cairo_set_line_width(cr, width);
+            }
+            int dash = a->has_dash ? a->dash : (a->type == MIIME_ANNOT_ALIGNMENT_REDLINE ? 1 : 0);
+            if (a->type == MIIME_ANNOT_BRACKET) {
+                double x1=a->points[0], y1=a->points[1], x2=a->points[2], y2=a->points[3];
+                double side=(x2 >= x1) ? 1.0 : -1.0;
+                double arm=fmin(fabs(x2-x1)*0.35, 10.0);
+                cairo_move_to(cr,x1+side*arm,y1); cairo_line_to(cr,x1,y1);
+                cairo_line_to(cr,x1,y2); cairo_line_to(cr,x1+side*arm,y2); cairo_stroke(cr);
+            } else if (a->type == MIIME_ANNOT_LINE && a->has_arrow && a->arrow != 0) {
+                double x1=a->points[0], y1=a->points[1], x2=a->points[2], y2=a->points[3];
+                double end_width=(a->has_stroke_width_pair && a->stroke_width_end>0)?a->stroke_width_end:width;
+                render_arrow_geometry(cr,&rng,x1,y1,x2,y2,rough,a->arrow,dash,
+                                      a->has_stroke_width_pair && a->stroke_width_end>0,
+                                      width,end_width);
+            } else if (a->type == MIIME_ANNOT_LINE && a->has_stroke_width_pair && a->stroke_width_end > 0) {
+                render_styled_shaft(cr,&rng,a->points[0],a->points[1],a->points[2],a->points[3],
+                                    rough,dash,1,width,a->stroke_width_end);
+            } else {
+                miime_sketch_line_dash(cr, &rng, a->points[0], a->points[1], a->points[2], a->points[3], rough, dash);
+            }
+            if (a->type == MIIME_ANNOT_SPACING_RULER) {
+                double dx=a->points[2]-a->points[0], dy=a->points[3]-a->points[1], len=hypot(dx,dy);
+                if (len > 0.001) {
+                    double nx=-dy/len*5.0, ny=dx/len*5.0;
+                    cairo_move_to(cr,a->points[0]-nx,a->points[1]-ny); cairo_line_to(cr,a->points[0]+nx,a->points[1]+ny);
+                    cairo_move_to(cr,a->points[2]-nx,a->points[3]-ny); cairo_line_to(cr,a->points[2]+nx,a->points[3]+ny);
+                    cairo_stroke(cr);
+            if (a->label_text[0]) {
+                        PangoLayout *layout=pango_cairo_create_layout(cr);
+                        pango_layout_set_text(layout,a->label_text,-1);
+                        cairo_move_to(cr,(a->points[0]+a->points[2])/2.0,(a->points[1]+a->points[3])/2.0-14.0);
+                        pango_cairo_show_layout(cr,layout); g_object_unref(layout);
+                    }
+                }
+            }
+            if (a->type == MIIME_ANNOT_UNDERLINE || a->type == MIIME_ANNOT_STRIKE)
+                cairo_set_line_cap(cr, marker ? CAIRO_LINE_CAP_SQUARE : CAIRO_LINE_CAP_ROUND);
             break;
 
-        case MIIME_ANNOT_RECT: {
+        case MIIME_ANNOT_RECT:
+        case MIIME_ANNOT_HIGHLIGHT_BOX: {
             if (a->point_count < 4) break;
-            double x = (a->points[0] < a->points[2]) ? a->points[0] : a->points[2];
-            double y = (a->points[1] < a->points[3]) ? a->points[1] : a->points[3];
-            double w = fabs(a->points[2] - a->points[0]);
-            double h = fabs(a->points[3] - a->points[1]);
-            cairo_rectangle(cr, x, y, w, h);
+            int opposite = a->point_count >= 8 ? 4 : 2;
+            double x = (a->points[0] < a->points[opposite]) ? a->points[0] : a->points[opposite];
+            double y = (a->points[1] < a->points[opposite + 1]) ? a->points[1] : a->points[opposite + 1];
+            double w = fabs(a->points[opposite] - a->points[0]);
+            double h = fabs(a->points[opposite + 1] - a->points[1]);
+            double radius = (a->has_radius && a->radius > 0.0) ? a->radius : 0.0;
+            render_rect_fill(cr, a, &rng, x, y, w, h, radius, rough);
+            if (rough) {
+                cairo_save(cr);
+                cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
+                cairo_set_line_width(cr, 5.5);
+                if (radius > 0.0) miime_sketch_rounded_rect(cr, &rng, x, y, w, h, radius, 1);
+                else miime_sketch_rect(cr, &rng, x, y, w, h, 1);
+                cairo_stroke(cr);
+                cairo_restore(cr);
+                cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, alpha);
+                cairo_set_line_width(cr, width);
+            }
+            if (radius > 0.0) miime_sketch_rounded_rect(cr, &rng, x, y, w, h, radius, rough);
+            else miime_sketch_rect(cr, &rng, x, y, w, h, rough);
+            if (a->has_dash && a->dash == 1) { double d[]={8,5}; cairo_set_dash(cr,d,2,0); }
+            else if (a->has_dash && a->dash == 2) { double d[]={2,4}; cairo_set_dash(cr,d,2,0); }
             cairo_stroke(cr);
+            cairo_set_dash(cr,NULL,0,0);
             break;
         }
 
-        case MIIME_ANNOT_ELLIPSE: {
+        case MIIME_ANNOT_CALLOUT: {
             if (a->point_count < 4) break;
-            double cx = (a->points[0] + a->points[2]) / 2.0;
-            double cy = (a->points[1] + a->points[3]) / 2.0;
-            double rx = fabs(a->points[2] - a->points[0]) / 2.0;
-            double ry = fabs(a->points[3] - a->points[1]) / 2.0;
+            int opposite = a->point_count >= 8 ? 4 : 2;
+            double x = fmin(a->points[0], a->points[opposite]);
+            double y = fmin(a->points[1], a->points[opposite + 1]);
+            double w = fabs(a->points[opposite] - a->points[0]);
+            double h = fabs(a->points[opposite + 1] - a->points[1]);
+            render_callout(cr, a, &rng, x, y, w, h, rough, width, alpha);
+            break;
+        }
+
+        case MIIME_ANNOT_ELLIPSE:
+        case MIIME_ANNOT_CIRCLE:
+        case MIIME_ANNOT_PIN: {
+            if (a->type == MIIME_ANNOT_PIN && a->point_count == 2) {
+                double radius = a->radius > 0.0 ? a->radius : 12.0;
+                int fill = a->has_fill ? a->fill : 2;
+                if (fill != 0) {
+                    cairo_save(cr);
+                    miime_sketch_ellipse(cr, &rng, a->points[0], a->points[1], radius, radius, 0);
+                    cairo_clip(cr);
+                    set_annotation_fill_source(cr, a);
+                    if (fill == 2) {
+                        miime_sketch_ellipse(cr, &rng, a->points[0], a->points[1], radius, radius, rough);
+                        cairo_fill(cr);
+                    } else if (fill == 1) {
+                        MiimeSketchRng fill_rng = rng;
+                        miime_sketch_hachure(cr, &fill_rng, a->points[0]-radius,
+                                            a->points[1]-radius, 2*radius, 2*radius);
+                    }
+                    cairo_restore(cr);
+                }
+                if (rough) {
+                    cairo_save(cr);
+                    cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
+                    cairo_set_line_width(cr, 5.5);
+                    miime_sketch_ellipse(cr, &rng, a->points[0], a->points[1], radius, radius, 1);
+                    cairo_stroke(cr);
+                    cairo_restore(cr);
+                    cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, alpha);
+                    cairo_set_line_width(cr, width);
+                }
+                miime_sketch_ellipse(cr, &rng, a->points[0], a->points[1], radius, radius, rough);
+                cairo_stroke(cr);
+                PangoLayout *layout = pango_cairo_create_layout(cr);
+                PangoFontDescription *font = pango_font_description_new();
+                pango_font_description_set_family(font, "Sans");
+                pango_font_description_set_absolute_size(font,
+                    (a->font_size > 0.0 ? a->font_size : radius) * PANGO_SCALE);
+                pango_layout_set_font_description(layout, font);
+                char number[24];
+                g_snprintf(number, sizeof(number), "%d", pin_number > 0 ? pin_number : 1);
+                pango_layout_set_text(layout, number, -1);
+                int text_w = 0, text_h = 0;
+                pango_layout_get_pixel_size(layout, &text_w, &text_h);
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, alpha);
+                cairo_move_to(cr, a->points[0] - text_w / 2.0, a->points[1] - text_h / 2.0);
+                pango_cairo_show_layout(cr, layout);
+                pango_font_description_free(font);
+                g_object_unref(layout);
+                break;
+            }
+            if (a->point_count < 4) break;
+            int opposite = a->point_count >= 8 ? 4 : 2;
+            double cx = (a->points[0] + a->points[opposite]) / 2.0;
+            double cy = (a->points[1] + a->points[opposite + 1]) / 2.0;
+            double rx = fabs(a->points[opposite] - a->points[0]) / 2.0;
+            double ry = fabs(a->points[opposite + 1] - a->points[1]) / 2.0;
+            if (a->type == MIIME_ANNOT_CIRCLE) rx = ry = fmax(rx, ry);
             if (rx < 0.5 || ry < 0.5) break;
-            cairo_save(cr);
-            cairo_translate(cr, cx, cy);
-            cairo_scale(cr, rx, ry);
-            cairo_arc(cr, 0, 0, 1.0, 0, 2 * M_PI);
-            cairo_restore(cr);
+            render_ellipse_fill(cr, a, &rng, cx, cy, rx, ry, rough);
+            if (rough) {
+                cairo_save(cr);
+                cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
+                cairo_set_line_width(cr, 5.5);
+                miime_sketch_ellipse(cr, &rng, cx, cy, rx, ry, 1);
+                cairo_stroke(cr);
+                cairo_restore(cr);
+                cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, alpha);
+                cairo_set_line_width(cr, width);
+            }
+            miime_sketch_ellipse(cr, &rng, cx, cy, rx, ry, rough);
+            if (a->has_dash && a->dash == 1) { double d[]={8,5}; cairo_set_dash(cr,d,2,0); }
+            else if (a->has_dash && a->dash == 2) { double d[]={2,4}; cairo_set_dash(cr,d,2,0); }
             cairo_stroke(cr);
+            cairo_set_dash(cr,NULL,0,0);
             break;
         }
 
@@ -63,26 +432,38 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
             if (a->point_count < 4) break;
             double x1 = a->points[0], y1 = a->points[1];
             double x2 = a->points[2], y2 = a->points[3];
-            /* Main shaft */
-            cairo_move_to(cr, x1, y1);
-            cairo_line_to(cr, x2, y2);
-            cairo_stroke(cr);
-
-            /* Arrowhead */
-            double angle = atan2(y2 - y1, x2 - x1);
-            double head_len = a->stroke_width * 4.0;
-            if (head_len < 10.0) head_len = 10.0;
-            double head_angle = 0.4; /* ~23 degrees */
-            double ax = x2 - head_len * cos(angle - head_angle);
-            double ay = y2 - head_len * sin(angle - head_angle);
-            double bx = x2 - head_len * cos(angle + head_angle);
-            double by = y2 - head_len * sin(angle + head_angle);
-
-            cairo_move_to(cr, x2, y2);
-            cairo_line_to(cr, ax, ay);
-            cairo_move_to(cr, x2, y2);
-            cairo_line_to(cr, bx, by);
-            cairo_stroke(cr);
+            gboolean legacy_arrow = !a->has_arrow && !a->has_dash &&
+                                     !(a->has_stroke_width_pair && a->stroke_width_end > 0);
+            if (rough && legacy_arrow) {
+                cairo_save(cr);
+                cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
+                cairo_set_line_width(cr, 5.5);
+                miime_sketch_arrow(cr, &rng, x1, y1, x2, y2, 1);
+                cairo_stroke(cr);
+                cairo_restore(cr);
+                cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, alpha);
+                cairo_set_line_width(cr, width);
+            } else if (rough) {
+                int heads=a->has_arrow?a->arrow:2;
+                int dash=a->has_dash?a->dash:0;
+                gboolean taper=a->has_stroke_width_pair && a->stroke_width_end>0;
+                cairo_save(cr);
+                cairo_set_source_rgba(cr,1.0,1.0,1.0,0.85);
+                render_arrow_geometry(cr,&rng,x1,y1,x2,y2,1,heads,dash,taper,5.5,5.5);
+                cairo_restore(cr);
+                cairo_set_source_rgba(cr,a->color_r,a->color_g,a->color_b,alpha);
+                cairo_set_line_width(cr,width);
+            }
+            if (legacy_arrow) {
+                miime_sketch_arrow(cr, &rng, x1, y1, x2, y2, rough);
+                cairo_stroke(cr);
+            } else {
+                int heads=a->has_arrow?a->arrow:2;
+                int dash=a->has_dash?a->dash:0;
+                gboolean taper=a->has_stroke_width_pair && a->stroke_width_end>0;
+                double end_width=taper?a->stroke_width_end:width;
+                render_arrow_geometry(cr,&rng,x1,y1,x2,y2,rough,heads,dash,taper,width,end_width);
+            }
             break;
         }
 
@@ -183,21 +564,52 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
     }
 }
 
+static int annotation_z(const MiimeAnnotation *a) {
+    if (!a) return 1;
+    if (a->has_ink && a->ink == MIIME_INK_MARKER) return 0;
+    if (a->has_z && a->z >= 0 && a->z <= 2) return a->z;
+    return 1;
+}
+
+static void render_annotation_pass(cairo_t *cr, const MiimeAnnotationStack *stack,
+                                   const MiimeAnnotation *preview, int z) {
+    if (stack) {
+        int count = miime_annot_stack_count(stack);
+        for (int i = 0; i < count; i++) {
+            const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
+            if (annotation_z(a) == z) render_one_annotation(cr, a, FALSE, pin_number_before(stack, i));
+        }
+    }
+    if (preview && annotation_z(preview) == z)
+        render_one_annotation(cr, preview, TRUE,
+                              pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0));
+}
+
 void miime_render_annotations(cairo_t *cr,
                               const MiimeAnnotationStack *stack,
                               const MiimeAnnotation *preview) {
     if (!cr) return;
-
+    gboolean has_z_order = FALSE;
     if (stack) {
         int count = miime_annot_stack_count(stack);
         for (int i = 0; i < count; i++) {
-            render_one_annotation(cr, miime_annot_stack_get(stack, i), FALSE);
+            const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
+            if (a && (a->has_z || (a->has_ink && a->ink == MIIME_INK_MARKER))) { has_z_order = TRUE; break; }
         }
     }
-
-    if (preview) {
-        render_one_annotation(cr, preview, TRUE);
+    if (preview && (preview->has_z || (preview->has_ink && preview->ink == MIIME_INK_MARKER))) has_z_order = TRUE;
+    if (!has_z_order) {
+        if (stack) {
+            int count = miime_annot_stack_count(stack);
+            for (int i = 0; i < count; i++)
+                render_one_annotation(cr, miime_annot_stack_get(stack, i), FALSE,
+                                      pin_number_before(stack, i));
+        }
+        if (preview) render_one_annotation(cr, preview, TRUE,
+                                           pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0));
+        return;
     }
+    for (int z = 0; z <= 2; z++) render_annotation_pass(cr, stack, preview, z);
 }
 
 void miime_render_on_screen(cairo_t *cr,
@@ -307,7 +719,7 @@ cairo_surface_t *miime_render_export(MiimeImage *img,
         for (int i = 0; i < count; i++) {
             const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
             if (a && a->type != MIIME_ANNOT_CROP) {
-                render_one_annotation(cr, a, FALSE);
+                render_one_annotation(cr, a, FALSE, pin_number_before(stack, i));
             }
         }
     }
@@ -317,6 +729,273 @@ cairo_surface_t *miime_render_export(MiimeImage *img,
     if (out_w) *out_w = target_w;
     if (out_h) *out_h = target_h;
     return out_surf;
+}
+
+typedef struct { cairo_t *cr; PangoFontDescription *font; } LayoutMeasureContext;
+
+static double measure_layout_line(const char *text, void *userdata) {
+    LayoutMeasureContext *ctx = userdata;
+    PangoLayout *layout = pango_cairo_create_layout(ctx->cr);
+    pango_layout_set_font_description(layout, ctx->font);
+    pango_layout_set_text(layout, text ? text : "", -1);
+    int width = 0, height = 0;
+    pango_layout_get_pixel_size(layout, &width, &height);
+    g_object_unref(layout);
+    return width;
+}
+
+static void layout_port_normal(double x, double y, double w, double h,
+                               double px, double py, int port,
+                               double *nx, double *ny) {
+    static const double normals[8][2]={{0,-1},{1,0},{0,1},{-1,0},
+        {-0.70710678118,-0.70710678118},{0.70710678118,-0.70710678118},
+        {0.70710678118,0.70710678118},{-0.70710678118,0.70710678118}};
+    if (port>=0 && port<8) { *nx=normals[port][0]; *ny=normals[port][1]; return; }
+    double d[4]={fabs(py-y),fabs(px-(x+w)),fabs(py-(y+h)),fabs(px-x)};
+    int best=0;
+    for (int i=1;i<4;i++) if (d[i]<d[best]) best=i;
+    *nx=normals[best][0]; *ny=normals[best][1];
+}
+
+static void layout_label_normal(const MiimeLayoutResult *r, double *nx, double *ny) {
+    double d[4]={fabs(r->port_label_y-r->label_y),
+                 fabs(r->port_label_x-(r->label_x+r->label_w)),
+                 fabs(r->port_label_y-(r->label_y+r->label_h)),
+                 fabs(r->port_label_x-r->label_x)};
+    int best=0;
+    for (int i=1;i<4;i++) if (d[i]<d[best]) best=i;
+    static const double normals[4][2]={{0,-1},{1,0},{0,1},{-1,0}};
+    *nx=normals[best][0]; *ny=normals[best][1];
+}
+
+static void draw_layout_leader(cairo_t *cr, const MiimeAnnotation *a,
+                               const MiimeLayoutItem *item,
+                               const MiimeLayoutResult *r, int offset_x) {
+    if (a->has_label_leader && a->label_leader==2) return;
+    double tx=item->target_x+offset_x, ty=item->target_y;
+    double tnx,tny,lnx,lny;
+    layout_port_normal(tx,ty,item->target_w,item->target_h,
+                       r->port_target_x,r->port_target_y,
+                       a->has_label_anchor ? a->label_anchor : -1,&tnx,&tny);
+    layout_label_normal(r,&lnx,&lny);
+    double sx=r->port_target_x, sy=r->port_target_y;
+    double ex=r->port_label_x, ey=r->port_label_y;
+    double dist=hypot(ex-sx,ey-sy);
+    int leader=a->has_label_leader ? a->label_leader : r->curve_type;
+    double to_label_x=(r->label_x+r->label_w*0.5)-(tx+item->target_w*0.5);
+    double to_label_y=(r->label_y+r->label_h*0.5)-(ty+item->target_h*0.5);
+    gboolean opposite=to_label_x*tnx+to_label_y*tny<0.0;
+    cairo_save(cr);
+    cairo_set_source_rgba(cr,a->color_r,a->color_g,a->color_b,a->color_a);
+    cairo_set_line_width(cr,1.5);
+    cairo_move_to(cr,sx,sy);
+    if (leader==0 && opposite) {
+        double x1=sx+tnx*20.0,y1=sy+tny*20.0;
+        double x2=ex-lnx*20.0,y2=ey-lny*20.0;
+        cairo_line_to(cr,x1,y1);
+        if (fabs(tnx)>0.5) {
+            double corridor=(to_label_y<0.0)?ty-20.0:ty+item->target_h+20.0;
+            cairo_curve_to(cr,x1,corridor,x2,corridor,x2,corridor);
+        } else {
+            double corridor=(to_label_x<0.0)?tx-20.0:tx+item->target_w+20.0;
+            cairo_curve_to(cr,corridor,y1,corridor,y2,corridor,y2);
+        }
+        cairo_line_to(cr,ex,ey);
+    } else if (leader==1) {
+        double x1=sx+tnx*20.0,y1=sy+tny*20.0;
+        double x2=ex-lnx*20.0,y2=ey-lny*20.0;
+        cairo_line_to(cr,x1,y1);
+        if (opposite) {
+            /* If the selected target port faces away from the label, take a
+             * clear corridor around the target before crossing its bounds. */
+            if (fabs(tnx)>0.5) {
+                double corridor=(to_label_y<0.0)?ty-20.0:ty+item->target_h+20.0;
+                cairo_line_to(cr,x1,corridor);
+                cairo_line_to(cr,x2,corridor);
+            } else {
+                double corridor=(to_label_x<0.0)?tx-20.0:tx+item->target_w+20.0;
+                cairo_line_to(cr,corridor,y1);
+                cairo_line_to(cr,corridor,y2);
+            }
+        } else {
+            double cx=fabs(tnx)>0.5 ? x2 : x1;
+            double cy=fabs(tnx)>0.5 ? y1 : y2;
+            cairo_line_to(cr,cx,cy);
+        }
+        cairo_line_to(cr,x2,y2);
+        cairo_line_to(cr,ex,ey);
+    } else {
+        cairo_curve_to(cr,sx+tnx*0.4*dist,sy+tny*0.4*dist,
+                       ex-lnx*0.4*dist,ey-lny*0.4*dist,ex,ey);
+    }
+    cairo_stroke(cr);
+    cairo_restore(cr);
+}
+
+char *miime_render_annotations_with_dry_run(MiimeImage *img,
+                                            const MiimeAnnotationStack *stack,
+                                            int layout_mode,
+                                            MiimeAestheticStyle aesthetic,
+                                            gboolean dry_run,
+                                            cairo_surface_t **out_surface,
+                                            int *out_w, int *out_h) {
+    if (out_surface) *out_surface = NULL;
+    if (!img) return NULL;
+    int img_w = miime_image_width(img), img_h = miime_image_height(img);
+    if (img_w <= 0 || img_h <= 0) return NULL;
+    int stack_count = stack ? miime_annot_stack_count(stack) : 0;
+    int label_count = 0;
+    gboolean has_z_order = FALSE;
+    for (int i = 0; i < stack_count; i++) {
+        const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
+        if (a && a->label_text[0]) label_count++;
+        if (a && (a->has_z || (a->has_ink && a->ink == MIIME_INK_MARKER))) has_z_order = TRUE;
+    }
+    /* No labels must use the established export path, preserving crop and
+     * pixel output exactly for existing callers. */
+    if (!label_count && !dry_run && !has_z_order) {
+        cairo_surface_t *legacy = miime_render_export(img, stack, out_w, out_h);
+        if (out_surface) *out_surface = legacy; else if (legacy) cairo_surface_destroy(legacy);
+        return NULL;
+    }
+
+    gboolean has_crop=FALSE;
+    double crop_x=0,crop_y=0,crop_w=img_w,crop_h=img_h;
+    for (int i=stack_count-1;i>=0;i--) {
+        const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
+        if (a && a->type==MIIME_ANNOT_CROP && a->point_count>=4) {
+            double x=fmin(a->points[0],a->points[2]);
+            double y=fmin(a->points[1],a->points[3]);
+            double w=fabs(a->points[2]-a->points[0]);
+            double h=fabs(a->points[3]-a->points[1]);
+            if (w>=1 && h>=1) { crop_x=x; crop_y=y; crop_w=w; crop_h=h; has_crop=TRUE; break; }
+        }
+    }
+    if (has_crop) {
+        if (crop_x<0) { crop_w+=crop_x; crop_x=0; }
+        if (crop_y<0) { crop_h+=crop_y; crop_y=0; }
+        if (crop_x+crop_w>img_w) crop_w=img_w-crop_x;
+        if (crop_y+crop_h>img_h) crop_h=img_h-crop_y;
+        if (crop_w<1) crop_w=1;
+        if (crop_h<1) crop_h=1;
+    }
+    int layout_img_w=(int)crop_w, layout_img_h=(int)crop_h;
+
+    MiimeLayoutItem items[MIIME_LAYOUT_MAX_ITEMS];
+    MiimeLayoutResult results[MIIME_LAYOUT_MAX_ITEMS];
+    int stack_indices[MIIME_LAYOUT_MAX_ITEMS];
+    int n = 0;
+    for (int i = 0; i < stack_count; i++) {
+        const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
+        if (!a || !a->label_text[0]) continue;
+        if (n >= MIIME_LAYOUT_MAX_ITEMS) {
+            g_warning("miime: layout limit %d reached; dropping label at annotation %d", MIIME_LAYOUT_MAX_ITEMS, i);
+            continue;
+        }
+        double x0=0,y0=0,x1=0,y1=0;
+        if (a->point_count >= 4) {
+            x0=fmin(a->points[0],a->points[2]); y0=fmin(a->points[1],a->points[3]);
+            x1=fmax(a->points[0],a->points[2]); y1=fmax(a->points[1],a->points[3]);
+            for (int k=4;k+1<a->point_count;k+=2) {
+                x0=fmin(x0,a->points[k]); y0=fmin(y0,a->points[k+1]);
+                x1=fmax(x1,a->points[k]); y1=fmax(y1,a->points[k+1]);
+            }
+        } else if (a->point_count >= 2) { x0=a->points[0]; y0=a->points[1]; x1=x0; y1=y0; }
+        items[n].target_x=x0-crop_x; items[n].target_y=y0-crop_y;
+        items[n].target_w=fmax(1.0,x1-x0); items[n].target_h=fmax(1.0,y1-y0);
+        g_strlcpy(items[n].text,a->label_text,sizeof(items[n].text));
+        items[n].preferred_anchor=a->has_label_anchor ? a->label_anchor : -1;
+        stack_indices[n]=i; n++;
+    }
+    int effective_mode=label_count == 0 ? 2 : layout_mode;
+    if (effective_mode==0) effective_mode=miime_layout_mode_select(layout_img_w,layout_img_h,n,items);
+    int offset_x=effective_mode==1 ? 300 : 0;
+    int canvas_w=layout_img_w+offset_x*2;
+
+    cairo_surface_t *measure_surface=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1);
+    cairo_t *measure_cr=cairo_create(measure_surface);
+    LayoutMeasureContext measure={measure_cr,pango_font_description_from_string("Sans 10")};
+    if (n && miime_layout_run(layout_img_w,layout_img_h,items,n,effective_mode,(int)aesthetic,
+                              measure_layout_line,&measure,results)!=0) {
+        pango_font_description_free(measure.font); cairo_destroy(measure_cr); cairo_surface_destroy(measure_surface);
+        return NULL;
+    }
+    pango_font_description_free(measure.font); cairo_destroy(measure_cr); cairo_surface_destroy(measure_surface);
+
+    if (dry_run) {
+        GString *json=g_string_new("{\"placements\":[");
+        gboolean comma=FALSE;
+        int seen=0;
+        for (int i=0;i<stack_count;i++) {
+            const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
+            if (!a || !a->label_text[0]) continue;
+            if (comma) g_string_append_c(json,',');
+            comma=TRUE;
+            if (seen < n) {
+                MiimeLayoutResult *r=&results[seen];
+                int leader=a->has_label_leader ? a->label_leader : (r->curve_type ? 1 : 0);
+                g_string_append_printf(json,"{\"annotation_index\":%d,\"label_x\":%.2f,\"label_y\":%.2f,\"label_w\":%.2f,\"label_h\":%.2f,\"port_target_x\":%.2f,\"port_target_y\":%.2f,\"leader\":%d,\"obstacle_detour\":%d}",
+                                       i,r->label_x,r->label_y,r->label_w,r->label_h,r->port_target_x,r->port_target_y,leader,r->obstacle_detour);
+            } else {
+                g_string_append_printf(json,"{\"annotation_index\":%d,\"label_x\":0,\"label_y\":0,\"label_w\":0,\"label_h\":0,\"obstacle_detour\":1}",i);
+            }
+            seen++;
+        }
+        g_string_append(json,"]}");
+        return g_string_free(json,FALSE);
+    }
+
+    int target_w=canvas_w, target_h=layout_img_h;
+    cairo_surface_t *surface=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,target_w,target_h);
+    cairo_t *cr=cairo_create(surface);
+    cairo_save(cr);
+    cairo_translate(cr,offset_x-crop_x,-crop_y);
+    cairo_surface_t *base=miime_image_get_surface(img);
+    if (base) { cairo_set_source_surface(cr,base,0,0); cairo_paint(cr); }
+    miime_render_set_aesthetic(aesthetic);
+    if (!has_z_order) {
+        for (int i=0;i<stack_count;i++) {
+            const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
+            if (a && a->type!=MIIME_ANNOT_CROP) {
+                if (a->label_text[0]) { MiimeAnnotation copy=*a; copy.label_text[0]='\0'; render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i)); }
+                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i));
+            }
+        }
+    } else {
+        for (int z=0;z<=2;z++) for (int i=0;i<stack_count;i++) {
+            const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
+            if (a && a->type!=MIIME_ANNOT_CROP && annotation_z(a)==z) {
+                if (a->label_text[0]) { MiimeAnnotation copy=*a; copy.label_text[0]='\0'; render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i)); }
+                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i));
+            }
+        }
+    }
+    cairo_restore(cr);
+    for (int i=0;i<n;i++) {
+        const MiimeAnnotation *a=miime_annot_stack_get(stack,stack_indices[i]);
+        MiimeLayoutResult *r=&results[i];
+        if (a) draw_layout_leader(cr,a,&items[i],r,offset_x);
+    }
+    PangoFontDescription *font=pango_font_description_from_string("Sans 10");
+    for (int i=0;i<n;i++) {
+        const MiimeAnnotation *a=miime_annot_stack_get(stack,stack_indices[i]);
+        MiimeLayoutResult *r=&results[i];
+        PangoLayout *layout=pango_cairo_create_layout(cr);
+        pango_layout_set_font_description(layout,font);
+        pango_layout_set_width(layout,240*PANGO_SCALE);
+        pango_layout_set_wrap(layout,PANGO_WRAP_WORD_CHAR);
+        pango_layout_set_text(layout,a->label_text,-1);
+        cairo_set_source_rgba(cr,a->color_r,a->color_g,a->color_b,a->color_a);
+        cairo_move_to(cr,r->label_x,r->label_y);
+        pango_cairo_show_layout(cr,layout);
+        g_object_unref(layout);
+    }
+    pango_font_description_free(font);
+    cairo_destroy(cr);
+    if (out_w) *out_w=target_w;
+    if (out_h) *out_h=target_h;
+    if (out_surface) *out_surface=surface; else cairo_surface_destroy(surface);
+    return NULL;
 }
 
 gboolean miime_render_save_to_file(cairo_surface_t *surface, const char *filepath) {

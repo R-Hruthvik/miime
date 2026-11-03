@@ -1,0 +1,135 @@
+[
+  {
+    "args": {
+      "annotations": [
+        {
+          "id": "compat-rect",
+          "type": "rect",
+          "points": [
+            30,
+            40,
+            170,
+            120
+          ],
+          "text": "Legacy",
+          "font_size": 18
+        }
+      ]
+    },
+    "sha256": "077cf0a084ed40f58c63768fb740b3dde7b8aecec0fe3996c290753a5575d664"
+  },
+  {
+    "args": {
+      "annotations": [
+        {
+          "id": "compat-line",
+          "type": "line",
+          "points": [
+            30,
+            40,
+            170,
+            120
+          ],
+          "text": "Legacy",
+          "font_size": 18
+        }
+      ]
+    },
+    "sha256": "95791a7c04e4039d70cc3f56462b6602989806633e2adc220ab1eb00a1c62639"
+  },
+  {
+    "args": {
+      "annotations": [
+        {
+          "id": "compat-ellipse",
+          "type": "ellipse",
+          "points": [
+            30,
+            40,
+            170,
+            120
+          ],
+          "text": "Legacy",
+          "font_size": 18
+        }
+      ]
+    },
+    "sha256": "785cf685c75a83fbb53f0613ae9f6c7be12e975658589d20ba26f30d39c4913d"
+  },
+  {
+    "args": {
+      "annotations": [
+        {
+          "id": "compat-arrow",
+          "type": "arrow",
+          "points": [
+            30,
+            40,
+            170,
+            120
+          ],
+          "text": "Legacy",
+          "font_size": 18
+        }
+      ]
+    },
+    "sha256": "f64fc3ada97ed77e08e4fc84948a25c86cf83af8fc34d7a737a78d1147d2947b"
+  },
+  {
+    "args": {
+      "annotations": [
+        {
+          "id": "compat-pen",
+          "type": "pen",
+          "points": [
+            30,
+            40,
+            170,
+            120
+          ],
+          "text": "Legacy",
+          "font_size": 18
+        }
+      ]
+    },
+    "sha256": "c37ec659645db2c74ff32ae5d989c3bab637d689cc872c703f8d99f22173cff8"
+  },
+  {
+    "args": {
+      "annotations": [
+        {
+          "id": "compat-text",
+          "type": "text",
+          "points": [
+            30,
+            40,
+            170,
+            120
+          ],
+          "text": "Legacy",
+          "font_size": 18
+        }
+      ]
+    },
+    "sha256": "3ee616ac9bc7d3bb58ae7904db6bf0b166215873aa0be273f8f1deda76e82a19"
+  },
+  {
+    "args": {
+      "annotations": [
+        {
+          "id": "compat-highlight_box",
+          "type": "highlight_box",
+          "points": [
+            30,
+            40,
+            170,
+            120
+          ],
+          "text": "Legacy",
+          "font_size": 18
+        }
+      ]
+    },
+    "sha256": "d581f405fb76b3d70abb132eb1b1d6007b8087ca299b3eeb9bdae146c4d5a359"
+  }
+]

@@ -14,10 +14,17 @@ out/
 
 # Binaries
 miime
+miime-mcp
 tests/test_image
 tests/test_annotate
 tests/test_render
 tests/test_tools
+tests/test_bidir
+tests/test_grounding
+tests/test_headless
+tests/test_layout
+tests/test_schema
+tests/test_sketch
 
 # Editor / IDE
 .vscode/

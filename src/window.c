@@ -4,8 +4,12 @@
 #include "annotate.h"
 #include "clipboard.h"
 #include "render.h"
+#include "schema.h"
 #include <stdlib.h>
 #include <string.h>
+
+static void export_annotations_dialog_finish(GObject *source, GAsyncResult *res, gpointer user_data);
+static void on_toggle_toolbar(gpointer user_data);
 
 struct MiimeWindow {
     GtkWidget            *gtk_window;
@@ -78,6 +82,16 @@ static void on_toggle_toolbar(gpointer user_data) {
     miime_window_toggle_toolbar(win);
 }
 
+static void on_export_annotations_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    MiimeWindow *win = (MiimeWindow *)user_data;
+    GtkFileDialog *dialog = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(dialog, "Export Annotations");
+    gtk_file_dialog_set_initial_name(dialog, "annotations.json");
+    gtk_file_dialog_save(dialog, GTK_WINDOW(win->gtk_window), NULL,
+                         export_annotations_dialog_finish, win);
+}
+
 static void on_save_cb(gpointer user_data) {
     MiimeWindow *win = (MiimeWindow *)user_data;
     miime_window_save(win);
@@ -119,6 +133,23 @@ static void save_file_dialog_finish(GObject *source, GAsyncResult *res, gpointer
             win->current_path = path;
             return;
         }
+    }
+    g_free(path);
+}
+
+static void export_annotations_dialog_finish(GObject *source, GAsyncResult *res, gpointer user_data) {
+    GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+    MiimeWindow *win = (MiimeWindow *)user_data;
+    GError *err = NULL;
+    GFile *file = gtk_file_dialog_save_finish(dialog, res, &err);
+    if (!file) { if (err) g_error_free(err); return; }
+    char *path = g_file_get_path(file);
+    g_object_unref(file);
+    if (!path) return;
+    char *json = miime_schema_serialize(win->annot_stack);
+    if (json) {
+        g_file_set_contents(path, json, -1, NULL);
+        g_free(json);
     }
     g_free(path);
 }
@@ -222,6 +253,11 @@ MiimeWindow *miime_window_new(GtkApplication *app) {
     gtk_widget_set_focusable(copy_btn, FALSE);
     g_signal_connect(copy_btn, "clicked", G_CALLBACK(on_copy_clicked), win);
     gtk_box_append(GTK_BOX(win->toolbar), copy_btn);
+
+    GtkWidget *export_btn = gtk_button_new_with_label("Export annotations");
+    gtk_widget_set_focusable(export_btn, FALSE);
+    g_signal_connect(export_btn, "clicked", G_CALLBACK(on_export_annotations_clicked), win);
+    gtk_box_append(GTK_BOX(win->toolbar), export_btn);
 
     /* Separator */
     gtk_box_append(GTK_BOX(win->toolbar),

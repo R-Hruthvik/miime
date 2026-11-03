@@ -7,4 +7,5 @@ Terminal=false
 Type=Application
 Categories=Graphics;Viewer;2DGraphics;
 MimeType=image/png;image/jpeg;image/webp;image/bmp;image/gif;image/tiff;image/svg+xml;
+Keywords=MIIME;image;viewer;annotation;ux;review;screenshot;
 StartupNotify=true
