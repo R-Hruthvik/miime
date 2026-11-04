@@ -58,9 +58,28 @@ static void test_per_sample_coverage_and_path_dedup(void) {
     cairo_surface_t*s=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,8,4);cairo_t*cr=cairo_create(s);
     for(int x=0;x<8;x++){cairo_set_source_rgb(cr,x<4?1:0,x<4?1:0,x<4?1:0);cairo_rectangle(cr,x,0,1,4);cairo_fill(cr);}cairo_destroy(cr);
     MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;MiimeAnnotationStack*stack=miime_annot_stack_new();MiimeAnnotation a={0};a.type=MIIME_ANNOT_LINE;a.point_count=4;a.points[0]=0;a.points[1]=2;a.points[2]=7;a.points[3]=2;a.has_color=TRUE;a.color_r=a.color_g=a.color_b=0;a.color_a=1;miime_annot_stack_push(stack,a);
-    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].contrast_hits>0&&r->annotations[0].contrast_hits<r->annotations[0].local_sample_count&&r->annotations[0].contrast_unresolved);miime_style_resolution_free(r);miime_annot_stack_free(stack);
+    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].contrast_hits==r->annotations[0].local_sample_count&&r->annotations[0].halo_applied&&!r->annotations[0].contrast_unresolved);miime_style_resolution_free(r);miime_annot_stack_free(stack);
     stack=miime_annot_stack_new();a=(MiimeAnnotation){0};a.type=MIIME_ANNOT_LINE;a.point_count=6;a.points[0]=1;a.points[1]=1;a.points[2]=0;a.points[3]=1;a.points[4]=1;a.points[5]=1;miime_annot_stack_push(stack,a);
     r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].local_sample_count==1);miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
+}
+static void test_shape_halo_rescues_only_when_edge_contrast_passes(void) {
+    cairo_surface_t*s=rgb_surface(16,8,.3,.3,.3);MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;
+    MiimeAnnotationStack*stack=miime_annot_stack_new();MiimeAnnotation a={0};
+    a.type=MIIME_ANNOT_LINE;a.point_count=4;a.points[0]=1;a.points[1]=2;a.points[2]=14;a.points[3]=2;
+    a.has_color=TRUE;a.color_r=a.color_g=a.color_b=0;a.color_a=1;miime_annot_stack_push(stack,a);
+    a.points[1]=5;a.points[3]=5;a.color_a=.15;miime_annot_stack_push(stack,a);
+    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotation_count==2);
+    MiimeAnnotationStyleResult*rescued=&r->annotations[0],*unresolved=&r->annotations[1];
+    assert(rescued->local_sample_count>0&&rescued->contrast_hits==rescued->local_sample_count);
+    assert(rescued->halo_applied&&!rescued->contrast_unresolved);
+    assert(unresolved->local_sample_count>0&&unresolved->contrast_hits==0);
+    assert(unresolved->halo_applied&&unresolved->contrast_unresolved&&unresolved->override_warning);
+    assert(strstr(r->warning_codes,"contrast_unresolved")&&strstr(r->warning_codes,"override_warning"));
+    assert(r->contrast_hits==rescued->local_sample_count&&r->contrast_total==rescued->local_sample_count+unresolved->local_sample_count);
+    miime_style_resolution_free(r);miime_annot_stack_free(stack);
+    stack=miime_annot_stack_new();a=(MiimeAnnotation){0};a.type=MIIME_ANNOT_TEXT;strcpy(a.text,"label");a.has_color=TRUE;a.color_r=a.color_g=a.color_b=0;a.color_a=.15;miime_annot_stack_push(stack,a);
+    r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].contrast_unresolved&&!r->annotations[0].halo_applied);
+    miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
 }
 static void test_explicit_zero_font_size_uses_legacy_fallback(void) {
     cairo_surface_t*s=rgb_surface(8,8,1,1,1);MiimeAnnotationStack*stack=miime_annot_stack_new();MiimeAnnotation a={0};a.has_font_size=TRUE;a.font_size=0;miime_annot_stack_push(stack,a);MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;
@@ -76,7 +95,7 @@ static void test_exact_palettes_and_style_tokens(void) {
 static void test_annotations_role_override_and_path_coverage(void) {
     cairo_surface_t*s=rgb_surface(80,50,.5,.5,.5);MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;MiimeAnnotationStack*stack=miime_annot_stack_new();
     MiimeAnnotation a={0};strcpy(a.json_id,"warning");a.type=MIIME_ANNOT_LINE;a.role=MIIME_ROLE_WARNING;a.has_role=TRUE;a.point_count=4;a.points[0]=5;a.points[1]=25;a.points[2]=75;a.points[3]=25;miime_annot_stack_push(stack,a);
-    a=(MiimeAnnotation){0};strcpy(a.json_id,"override");a.type=MIIME_ANNOT_RECT;a.has_color=TRUE;a.color_r=1;a.color_g=0;a.color_b=1;a.color_a=1;a.has_label_surface=TRUE;a.label_surface_rgba[0]=1;a.label_surface_rgba[1]=1;a.label_surface_rgba[2]=1;a.label_surface_rgba[3]=1;miime_annot_stack_push(stack,a);
+    a=(MiimeAnnotation){0};strcpy(a.json_id,"override");a.type=MIIME_ANNOT_RECT;a.has_color=TRUE;a.color_r=1;a.color_g=0;a.color_b=1;a.color_a=.15;a.has_label_surface=TRUE;a.label_surface_rgba[0]=1;a.label_surface_rgba[1]=1;a.label_surface_rgba[2]=1;a.label_surface_rgba[3]=1;miime_annot_stack_push(stack,a);
     MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotation_count==2);assert(r->annotations[0].ink_rgba[0]==miime_style_palette(MIIME_THEME_LIGHT)->warning[0]);assert(r->annotations[0].local_sample_count>1&&r->annotations[0].local_sample_count<=64);assert(r->annotations[1].ink_rgba[0]==1&&r->annotations[1].ink_rgba[2]==1&&r->annotations[1].override_warning);assert(strstr(r->warning_codes,"override_warning"));assert(r->contrast_total==r->contrast_hits+r->annotations[1].local_sample_count||r->contrast_total>=r->contrast_hits);miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
 }
 static void test_roles_require_active_resolver_and_alias_conflict(void) {
@@ -91,5 +110,5 @@ static void test_crop_and_empty_crop(void) {
     cairo_surface_t*s=rgb_surface(40,30,1,1,1);MiimeStyleConfig c={0};c.theme=MIIME_THEME_AUTO;c.has_theme=TRUE;MiimeStyleResolution*r=miime_style_resolve(s,&c,NULL,(MiimeCrop){10,8,4,3,TRUE});assert(r&&r->image_sample_count==12&&r->resolved_theme==MIIME_THEME_LIGHT);miime_style_resolution_free(r);r=miime_style_resolve(s,&c,NULL,(MiimeCrop){60,8,4,3,TRUE});assert(r&&!strcmp(r->policy,"empty_crop")&&r->image_sample_count==0);miime_style_resolution_free(r);cairo_surface_destroy(s);
 }
 int main(void) {
-    test_auto_theme_thresholds_and_ties();test_auto_style_edge_threshold();test_sampler_caps_and_even_spacing();test_style_alpha_composite_uses_white_analysis_bg();test_exact_palettes_and_style_tokens();test_terminal_and_photo_fixtures();test_label_contrast_uses_surface_pair();test_alpha_composite_and_text_surface_alpha();test_per_sample_coverage_and_path_dedup();test_explicit_zero_font_size_uses_legacy_fallback();test_annotations_role_override_and_path_coverage();test_roles_require_active_resolver_and_alias_conflict();test_aesthetic_alias_overrides_auto_theme_style();test_crop_and_empty_crop();puts("style tests passed");return 0;
+    test_auto_theme_thresholds_and_ties();test_auto_style_edge_threshold();test_sampler_caps_and_even_spacing();test_style_alpha_composite_uses_white_analysis_bg();test_exact_palettes_and_style_tokens();test_terminal_and_photo_fixtures();test_label_contrast_uses_surface_pair();test_alpha_composite_and_text_surface_alpha();test_per_sample_coverage_and_path_dedup();test_shape_halo_rescues_only_when_edge_contrast_passes();test_explicit_zero_font_size_uses_legacy_fallback();test_annotations_role_override_and_path_coverage();test_roles_require_active_resolver_and_alias_conflict();test_aesthetic_alias_overrides_auto_theme_style();test_crop_and_empty_crop();puts("style tests passed");return 0;
 }

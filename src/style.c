@@ -173,8 +173,21 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
                 ratio=contrast(lum(foreground[0],foreground[1],foreground[2]),lum(source[0],source[1],source[2]));
             }
             if(ratio>=target){z->contrast_hits++;o->contrast_hits++;}
+            else if(!is_text) {
+                /* A missed shape sample receives the specified opaque dual halo.
+                 * Evaluate the ink against each adjacent neutral edge; either edge
+                 * can provide enough separation for the rendered stroke. */
+                z->halo_applied=TRUE;
+                const double halo_edges[2][3]={{1,1,1},{0,0,0}};
+                for(int edge=0;edge<2;edge++) {
+                    double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]}, halo_fg[3];
+                    composite_rgba(ink,halo_edges[edge],halo_fg);
+                    double halo_ratio=contrast(lum(halo_fg[0],halo_fg[1],halo_fg[2]),lum(halo_edges[edge][0],halo_edges[edge][1],halo_edges[edge][2]));
+                    if(halo_ratio>=target){z->contrast_hits++;o->contrast_hits++;break;}
+                }
+            }
         }
-        if(z->contrast_hits<z->local_sample_count){z->contrast_unresolved=TRUE;z->halo_applied=TRUE;append_warning(o->warning_codes,"contrast_unresolved");if(has_override){z->override_warning=TRUE;append_warning(o->warning_codes,"override_warning");}}
+        if(z->contrast_hits<z->local_sample_count){z->contrast_unresolved=TRUE;append_warning(o->warning_codes,"contrast_unresolved");if(has_override){z->override_warning=TRUE;append_warning(o->warning_codes,"override_warning");}}
     }
     g_free(values); return o;
 }
