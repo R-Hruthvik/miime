@@ -28,4 +28,6 @@ const char *miime_style_token(MiimeDrawingStyle style);
 MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *clean_source,
     const MiimeStyleConfig *requested, const MiimeAnnotationStack *stack, MiimeCrop crop);
 void miime_style_resolution_free(MiimeStyleResolution *resolution);
+char *miime_style_resolution_to_json(const MiimeStyleResolution *resolution,
+                                     MiimeCrop crop, int rail_offset_x);
 #endif

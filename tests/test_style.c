@@ -109,6 +109,21 @@ static void test_aesthetic_alias_overrides_auto_theme_style(void) {
 static void test_crop_and_empty_crop(void) {
     cairo_surface_t*s=rgb_surface(40,30,1,1,1);MiimeStyleConfig c={0};c.theme=MIIME_THEME_AUTO;c.has_theme=TRUE;MiimeStyleResolution*r=miime_style_resolve(s,&c,NULL,(MiimeCrop){10,8,4,3,TRUE});assert(r&&r->image_sample_count==12&&r->resolved_theme==MIIME_THEME_LIGHT);miime_style_resolution_free(r);r=miime_style_resolve(s,&c,NULL,(MiimeCrop){60,8,4,3,TRUE});assert(r&&!strcmp(r->policy,"empty_crop")&&r->image_sample_count==0);miime_style_resolution_free(r);cairo_surface_destroy(s);
 }
+static void test_diagnostics_serialize_requested_and_resolved_fields(void) {
+    cairo_surface_t*s=rgb_surface(12,10,.25,.25,.25);MiimeAnnotationStack*stack=miime_annot_stack_new();
+    MiimeAnnotation a={0};strcpy(a.json_id,"quote\"slash\\id");a.type=MIIME_ANNOT_LINE;a.point_count=4;a.points[0]=1;a.points[1]=4;a.points[2]=10;a.points[3]=4;miime_annot_stack_push(stack,a);
+    MiimeStyleConfig c={0};c.has_theme=TRUE;c.theme=MIIME_THEME_AUTO;c.has_analysis_background=TRUE;c.analysis_background_rgba=0xDDEEFFff;
+    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){2,1,8,7,TRUE});assert(r);
+    char*json=miime_style_resolution_to_json(r,(MiimeCrop){2,1,8,7,TRUE},300);assert(json);
+    assert(strstr(json,"\"requested\":{\"drawing_style\":null,\"theme\":\"auto\",\"analysis_background\":\"#DDEEFF\""));
+    assert(strstr(json,"\"resolved\":{\"drawing_style\":\"sketch\",\"theme\":\"dark\"}"));
+    assert(strstr(json,"\"analysis_background\":\"#DDEEFF\""));
+    assert(strstr(json,"\"count\":56,\"max_count\":4096"));
+    assert(strstr(json,"\"text_target\":4.5,\"shape_target\":3.0"));
+    assert(strstr(json,"quote\\\"slash\\\\id"));
+    assert(strstr(json,"\"halo_applied\":"));assert(strstr(json,"\"warnings\":["));
+    g_free(json);miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
+}
 int main(void) {
-    test_auto_theme_thresholds_and_ties();test_auto_style_edge_threshold();test_sampler_caps_and_even_spacing();test_style_alpha_composite_uses_white_analysis_bg();test_exact_palettes_and_style_tokens();test_terminal_and_photo_fixtures();test_label_contrast_uses_surface_pair();test_alpha_composite_and_text_surface_alpha();test_per_sample_coverage_and_path_dedup();test_shape_halo_rescues_only_when_edge_contrast_passes();test_explicit_zero_font_size_uses_legacy_fallback();test_annotations_role_override_and_path_coverage();test_roles_require_active_resolver_and_alias_conflict();test_aesthetic_alias_overrides_auto_theme_style();test_crop_and_empty_crop();puts("style tests passed");return 0;
+    test_auto_theme_thresholds_and_ties();test_auto_style_edge_threshold();test_sampler_caps_and_even_spacing();test_style_alpha_composite_uses_white_analysis_bg();test_exact_palettes_and_style_tokens();test_terminal_and_photo_fixtures();test_label_contrast_uses_surface_pair();test_alpha_composite_and_text_surface_alpha();test_per_sample_coverage_and_path_dedup();test_shape_halo_rescues_only_when_edge_contrast_passes();test_explicit_zero_font_size_uses_legacy_fallback();test_annotations_role_override_and_path_coverage();test_roles_require_active_resolver_and_alias_conflict();test_aesthetic_alias_overrides_auto_theme_style();test_crop_and_empty_crop();test_diagnostics_serialize_requested_and_resolved_fields();puts("style tests passed");return 0;
 }

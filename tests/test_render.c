@@ -288,7 +288,7 @@ static void test_options_layout_uses_crop_rail_and_shared_resolution(void) {
     cairo_surface_t *out=NULL; int w=0,h=0;
     char *json=miime_render_annotations_with_options(img,stack,1,MIIME_AESTHETIC_CLEAN_TECHNICAL,
                                                        &options,TRUE,&out,&w,&h);
-    assert(json && !out && strstr(json,"\"theme\":2") && strstr(json,"\"drawing_style\":\"minimal\""));
+    assert(json && !out && strstr(json,"\"theme\":\"dark\"") && strstr(json,"\"drawing_style\":\"minimal\""));
     g_free(json);
     json=miime_render_annotations_with_options(img,stack,1,MIIME_AESTHETIC_CLEAN_TECHNICAL,
                                                 &options,FALSE,&out,&w,&h);
@@ -297,7 +297,8 @@ static void test_options_layout_uses_crop_rail_and_shared_resolution(void) {
     assert(pixel_value(out,300,0)==pixel_value(miime_image_get_surface(img),20,10));
     json=miime_render_annotations_with_options(img,stack,1,MIIME_AESTHETIC_CLEAN_TECHNICAL,
                                                 &options,TRUE,NULL,NULL,NULL);
-    assert(json && strstr(json,"\"resolution\":{\"drawing_style\":\"minimal\",\"theme\":2"));
+    assert(json && strstr(json,"\"resolution\":{\"requested\":{\"drawing_style\":\"minimal\",\"theme\":\"auto\""));
+    assert(strstr(json,"\"resolved\":{\"drawing_style\":\"minimal\",\"theme\":\"dark\"}"));
     assert(strstr(json,"\"coordinate_space\":\"source_image\",\"crop_x\":20,\"crop_y\":10,\"crop_width\":40,\"crop_height\":40,\"rail_offset_x\":300"));
     const char *placement=strstr(json,"\"label_x\":");
     assert(placement);

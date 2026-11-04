@@ -98,13 +98,41 @@ def dry_render(args):
     assert "result" in response, response
     return json.loads(next(c["text"] for c in response["result"]["content"] if c.get("type")=="text"))
 
+def raw_json_object_field(raw, field):
+    marker = json.dumps(field) + ":"
+    start = raw.index(marker) + len(marker)
+    while raw[start].isspace():
+        start += 1
+    assert raw[start] == "{", raw[start:]
+    depth = 0
+    quoted = escaped = False
+    for end in range(start, len(raw)):
+        char = raw[end]
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            continue
+        if char == '"':
+            quoted = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return raw[start:end + 1]
+    raise AssertionError("unterminated JSON object")
+
 alias_only = dry_render({"aesthetic_style":"clean_technical", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
 assert "resolution" not in alias_only, alias_only
 alias_optin = dry_render({"theme":"dark", "aesthetic_style":"clean_technical", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
-assert alias_optin["resolution"]["drawing_style"] == "technical", alias_optin
+assert alias_optin["resolution"]["resolved"]["drawing_style"] == "technical", alias_optin
 conflict = dry_render({"drawing_style":"editorial", "theme":"dark", "aesthetic_style":"clean_technical", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
-assert conflict["resolution"]["drawing_style"] == "editorial", conflict
-assert "style_alias_conflict" in conflict["resolution"]["warning_codes"], conflict
+assert conflict["resolution"]["resolved"]["drawing_style"] == "editorial", conflict
+assert "style_alias_conflict" in conflict["resolution"]["warnings"], conflict
 
 # Patch config is requested state: omitted fields inherit, reset clears before
 # fields in the same request apply, and the reset command itself is not saved.
@@ -114,7 +142,7 @@ send({"jsonrpc":"2.0","id":59,"method":"tools/call","params":{"name":"patch_ux_a
 inherited_patch = recv()
 assert "result" in inherited_patch, inherited_patch
 inherited_info = json.loads(next(c["text"] for c in inherited_patch["result"]["content"] if c.get("type")=="text"))
-assert inherited_info["resolution"]["theme"] == 2 and inherited_info["resolution"]["drawing_style"] == "editorial", inherited_info
+assert inherited_info["resolution"]["resolved"]["theme"] == "dark" and inherited_info["resolution"]["resolved"]["drawing_style"] == "editorial", inherited_info
 send({"jsonrpc":"2.0","id":60,"method":"tools/call","params":{"name":"get_ux_annotations","arguments":{}}})
 stored = json.loads(recv()["result"]["content"][0]["text"])
 assert stored["theme"] == "dark" and stored["drawing_style"] == "editorial" and stored["analysis_background"] == "#AABBCC", stored
@@ -122,7 +150,11 @@ assert stored["theme"] == "dark" and stored["drawing_style"] == "editorial" and 
 send({"jsonrpc":"2.0","id":66,"method":"tools/call","params":{"name":"render_ux_annotations","arguments":{"annotations":[{"type":"rect","points":[10,10,30,30]}]}}})
 assert "result" in recv()
 send({"jsonrpc":"2.0","id":67,"method":"tools/call","params":{"name":"render_ux_annotations","arguments":{"dry_run":True,"annotations":[{"type":"rect","points":[10,10,30,30]}]}}})
-assert "result" in recv()
+plain_render_dry = recv()
+assert "result" in plain_render_dry
+plain_render_diagnostics = json.loads(next(c["text"] for c in plain_render_dry["result"]["content"] if c.get("type")=="text"))
+assert plain_render_diagnostics["resolution"]["requested"]["theme"] == "dark", plain_render_diagnostics
+assert plain_render_diagnostics["resolution"]["resolved"]["drawing_style"] == "editorial", plain_render_diagnostics
 send({"jsonrpc":"2.0","id":78,"method":"tools/call","params":{"name":"get_ux_annotations","arguments":{}}})
 stored_after_render = json.loads(recv()["result"]["content"][0]["text"])
 assert stored_after_render["theme"] == "dark" and stored_after_render["drawing_style"] == "editorial" and stored_after_render["analysis_background"] == "#AABBCC", stored_after_render
@@ -142,9 +174,48 @@ assert json.dumps(json.loads(recv()["result"]["content"][0]["text"]), sort_keys=
 # Two consecutive request-only themes resolve independently.
 request_light = dry_render({"theme":"light", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
 request_dark = dry_render({"theme":"dark", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
-assert request_light["resolution"]["theme"] != request_dark["resolution"]["theme"]
+assert request_light["resolution"]["resolved"]["theme"] != request_dark["resolution"]["resolved"]["theme"]
 legacy_after_scoped = dry_render({"annotations":[{"type":"rect","points":[10,10,30,30]}]})
-assert "resolution" not in legacy_after_scoped, legacy_after_scoped
+assert legacy_after_scoped["resolution"]["requested"]["theme"] == "warm", legacy_after_scoped
+
+# Dry-run and export must report the same deterministic resolution for the
+# same clean source, crop, annotations, and requested configuration.
+diagnostic_annotations = [
+    {"id":"diag-shape", "type":"rect", "points":[12,14,42,46], "role":"warning"},
+    {"id":"diag-label", "type":"text", "points":[20,20], "text":"diagnostic label", "label":{"text":"diagnostic label"}},
+]
+diag_args = {"theme":"auto", "analysis_background":"#DDEEFF", "annotations":diagnostic_annotations}
+dry_diag = dry_render(diag_args)
+send({"jsonrpc":"2.0","id":81,"method":"tools/call","params":{"name":"render_ux_annotations","arguments":dict(diag_args,dry_run=True)}})
+dry_diag_response = recv()
+dry_diag_raw = next(c["text"] for c in dry_diag_response["result"]["content"] if c.get("type")=="text")
+send({"jsonrpc":"2.0","id":79,"method":"tools/call","params":{"name":"render_ux_annotations","arguments":diag_args}})
+render_diag_response = recv()
+assert "result" in render_diag_response, render_diag_response
+assert len(render_diag_response["result"]["content"]) == 2
+assert render_diag_response["result"]["content"][0]["type"] == "image"
+render_diag_raw = next(c["text"] for c in render_diag_response["result"]["content"] if c.get("type")=="text")
+render_diag_text = json.loads(render_diag_raw)
+assert render_diag_text["resolution"] == dry_diag["resolution"], (render_diag_text, dry_diag)
+assert raw_json_object_field(dry_diag_raw,"resolution") == raw_json_object_field(render_diag_raw,"resolution")
+resolution = dry_diag["resolution"]
+assert resolution["requested"] == {"drawing_style":None,"theme":"auto","analysis_background":"#DDEEFF","aesthetic_style":None}, resolution
+assert resolution["resolved"]["theme"] in ("light", "dark", "warm", "neutral"), resolution
+assert resolution["analysis_background"] == "#DDEEFF", resolution
+assert resolution["image_sampling"]["policy"] and resolution["image_sampling"]["count"] > 0, resolution
+assert resolution["contrast"]["text_target"] == 4.5 and resolution["contrast"]["shape_target"] == 3.0, resolution
+assert resolution["contrast"]["total"] >= resolution["contrast"]["hits"], resolution
+assert {a["id"] for a in resolution["annotations"]} == {"diag-shape", "diag-label"}, resolution
+assert all("halo_applied" in a and "warnings" in a for a in resolution["annotations"]), resolution
+
+# Resolution-derived annotation colors and defaults must never enter requested
+# get/patch state, including after an auto-theme render has been performed.
+send({"jsonrpc":"2.0","id":80,"method":"tools/call","params":{"name":"get_ux_annotations","arguments":{}}})
+diagnostic_state = json.loads(recv()["result"]["content"][0]["text"])
+assert diagnostic_state["theme"] == "auto", diagnostic_state
+for item in diagnostic_state["annotations"]:
+    assert "color" not in item and "font_size" not in item, item
+    assert "resolved" not in item and "resolution" not in item, item
 
 # No-label MCP exports must honor z ordering and marker's forced-under layer.
 def render_pixel(annotations, x=32, y=32):

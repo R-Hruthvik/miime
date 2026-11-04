@@ -316,6 +316,28 @@ static MiimeAestheticStyle config_aesthetic(const MiimeStyleConfig *config, cons
     return extract_aesthetic(args);
 }
 
+static char *extract_resolution_object(const char *json) {
+    const char *key=json?strstr(json,"\"resolution\":"):NULL;
+    if(!key)return NULL;
+    const char *start=strchr(key,':');
+    if(!start)return NULL;
+    do { start++; } while(*start==' '||*start=='\t'||*start=='\r'||*start=='\n');
+    if(*start!='{')return NULL;
+    int depth=0; gboolean quoted=FALSE,escaped=FALSE;
+    for(const char *p=start;*p;p++) {
+        if(quoted) {
+            if(escaped)escaped=FALSE;
+            else if(*p=='\\')escaped=TRUE;
+            else if(*p=='"')quoted=FALSE;
+            continue;
+        }
+        if(*p=='"')quoted=TRUE;
+        else if(*p=='{')depth++;
+        else if(*p=='}'&&--depth==0)return g_strndup(start,(gsize)(p-start+1));
+    }
+    return NULL;
+}
+
 static char *handle_render_internal(const char *args, const char *annotations_override,
                                     const MiimeStyleConfig *provided_config) {
     /* deserialize annotations from args (extra keys ignored) */
@@ -325,7 +347,12 @@ static char *handle_render_internal(const char *args, const char *annotations_ov
         annotation_source=g_state_annotations;
     MiimeStyleConfig local_config = {0};
     if (provided_config) local_config=*provided_config;
-    else if (!parse_requested_config(args, &local_config)) return NULL;
+    else {
+        MiimeStyleConfig request_config={0};
+        if (!parse_requested_config(args, &request_config)) return NULL;
+        local_config=g_state_render_config;
+        merge_render_config(&local_config,&request_config);
+    }
     MiimeAnnotationStack *stack = miime_schema_deserialize_ex(annotation_source ? annotation_source : args, &err, g_state_registry);
     if (!stack) {
         if (err && strstr(err->message,"unknown som_id")) {
@@ -354,10 +381,16 @@ static char *handle_render_internal(const char *args, const char *annotations_ov
     int layout_mode=extract_layout_mode(args);
     gboolean dry_run=extract_bool(args,"dry_run",FALSE);
     gboolean style_opted_in=local_config.has_drawing_style || local_config.has_theme;
+    char *resolution_json=NULL;
     MiimeRenderOptions options={.requested=local_config,.resolution=NULL};
     if (g_state_image) {
         MiimeImage *img = miime_image_load(g_state_image);
         if (img) {
+            if(style_opted_in&&!dry_run) {
+                char *diagnostic_payload=miime_render_annotations_with_options(img,stack,layout_mode,aesthetic,&options,TRUE,NULL,NULL,NULL);
+                resolution_json=extract_resolution_object(diagnostic_payload);
+                g_free(diagnostic_payload);
+            }
             char *placement_json=style_opted_in
                 ? miime_render_annotations_with_options(img,stack,layout_mode,aesthetic,&options,dry_run,&surf,&w,&h)
                 : miime_render_annotations_with_dry_run(img,stack,layout_mode,aesthetic,dry_run,&surf,&w,&h);
@@ -372,6 +405,7 @@ static char *handle_render_internal(const char *args, const char *annotations_ov
                 }
                 g_string_append(dry,"\"}]}");
                 g_free(placement_json);
+                g_free(resolution_json);
                 miime_image_free(img);
                 miime_annot_stack_free(stack);
                 return g_string_free(dry,FALSE);
@@ -395,7 +429,10 @@ static char *handle_render_internal(const char *args, const char *annotations_ov
     g_string_append_printf(telem, "%d,\"collisions_resolved\":0,\"warnings\":[", n);
     /* warning if >5 annotations */
     if (n >= 5) g_string_append(telem, "\"dense: consider margin_rail\"");
-    g_string_append(telem, "]}");
+    g_string_append(telem, "]");
+    if(resolution_json) { g_string_append(telem,",\"resolution\":"); g_string_append(telem,resolution_json); }
+    g_string_append(telem,"}");
+    g_free(resolution_json);
 
     GString *res = g_string_new("{\"content\":[");
     if (b64) {

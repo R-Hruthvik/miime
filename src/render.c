@@ -1146,11 +1146,12 @@ static char *render_annotations_core(MiimeImage *img,
         }
         g_string_append(json,"]");
         if (resolution) {
-            g_string_append_printf(json,",\"resolution\":{\"drawing_style\":\"%s\",\"theme\":%d,\"image_sample_count\":%u,\"contrast_hits\":%u,\"contrast_total\":%u,\"policy\":\"%s\",\"warning_codes\":\"%s\",\"coordinate_space\":\"source_image\",\"crop_x\":%d,\"crop_y\":%d,\"crop_width\":%d,\"crop_height\":%d,\"rail_offset_x\":%d}",
-                miime_style_token(resolution->resolved_drawing_style),(int)resolution->resolved_theme,
-                resolution->image_sample_count,resolution->contrast_hits,resolution->contrast_total,
-                resolution->policy,resolution->warning_codes,source_crop.x,source_crop.y,
-                source_crop.width,source_crop.height,offset_x);
+            char *diagnostics=miime_style_resolution_to_json(resolution,source_crop,offset_x);
+            if(diagnostics) {
+                g_string_append(json,",\"resolution\":");
+                g_string_append(json,diagnostics);
+                g_free(diagnostics);
+            }
         }
         g_string_append_c(json,'}');
         miime_style_resolution_free(owned_resolution);

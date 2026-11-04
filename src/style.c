@@ -192,3 +192,76 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
     g_free(values); return o;
 }
 void miime_style_resolution_free(MiimeStyleResolution *r) { if(r){g_free(r->annotations);g_free(r);} }
+
+static const char *theme_token(MiimeTheme theme) {
+    static const char *tokens[]={"auto","light","dark","warm","neutral"};
+    return theme>=MIIME_THEME_AUTO&&theme<=MIIME_THEME_NEUTRAL?tokens[theme]:"neutral";
+}
+
+static void json_append_string(GString *json,const char *value) {
+    g_string_append_c(json,'"');
+    for(const unsigned char *p=(const unsigned char *)(value?value:"");*p;p++) {
+        if(*p=='"'||*p=='\\') { g_string_append_c(json,'\\'); g_string_append_c(json,(char)*p); }
+        else if(*p<0x20) g_string_append_printf(json,"\\u%04x",(unsigned)*p);
+        else g_string_append_c(json,(char)*p);
+    }
+    g_string_append_c(json,'"');
+}
+
+static void json_append_rgba(GString *json,const double rgba[4]) {
+    g_string_append_printf(json,"[%.6f,%.6f,%.6f,%.6f]",rgba[0],rgba[1],rgba[2],rgba[3]);
+}
+
+char *miime_style_resolution_to_json(const MiimeStyleResolution *r,MiimeCrop crop,int rail_offset_x) {
+    if(!r)return NULL;
+    GString *json=g_string_new("{\"requested\":{\"drawing_style\":");
+    if(r->requested.has_drawing_style) json_append_string(json,miime_style_token(r->requested.drawing_style));
+    else g_string_append(json,"null");
+    g_string_append(json,",\"theme\":");
+    if(r->requested.has_theme) json_append_string(json,theme_token(r->requested.theme));
+    else g_string_append(json,"null");
+    g_string_append(json,",\"analysis_background\":");
+    if(r->requested.has_analysis_background) {
+        guint32 c=r->requested.analysis_background_rgba;
+        g_string_append_printf(json,"\"#%02X%02X%02X\"",(c>>24)&255,(c>>16)&255,(c>>8)&255);
+    } else g_string_append(json,"null");
+    g_string_append(json,",\"aesthetic_style\":");
+    if(r->requested.has_aesthetic_style)
+        json_append_string(json,r->requested.aesthetic_style==MIIME_AESTHETIC_CLEAN_TECHNICAL?"clean_technical":"rough_sketch");
+    else g_string_append(json,"null");
+    g_string_append_printf(json,"},\"resolved\":{\"drawing_style\":\"%s\",\"theme\":\"%s\"},\"analysis_background\":\"#%02X%02X%02X\",\"image_sampling\":{\"policy\":\"%s\",\"count\":%u,\"max_count\":4096,\"coordinate_space\":\"source_image\",\"crop_x\":%d,\"crop_y\":%d,\"crop_width\":%d,\"crop_height\":%d,\"rail_offset_x\":%d},\"contrast\":{\"policy\":\"alpha_composited_relative_luminance\",\"text_target\":%.1f,\"shape_target\":%.1f,\"hits\":%u,\"total\":%u,\"coverage\":%.6f},\"warnings\":[",
+        miime_style_token(r->resolved_drawing_style),theme_token(r->resolved_theme),
+        (r->requested.has_analysis_background?(r->requested.analysis_background_rgba>>24)&255:255),
+        (r->requested.has_analysis_background?(r->requested.analysis_background_rgba>>16)&255:255),
+        (r->requested.has_analysis_background?(r->requested.analysis_background_rgba>>8)&255:255),
+        r->policy,r->image_sample_count,crop.x,crop.y,crop.width,crop.height,rail_offset_x,
+        r->text_target,r->shape_target,r->contrast_hits,r->contrast_total,
+        r->contrast_total?(double)r->contrast_hits/r->contrast_total:1.0);
+    gboolean comma=FALSE;
+    if(r->warning_codes[0]) {
+        char **warnings=g_strsplit(r->warning_codes,",",-1);
+        for(guint i=0;warnings[i];i++) if(warnings[i][0]) {
+            if(comma) g_string_append_c(json,',');
+            comma=TRUE;
+            json_append_string(json,warnings[i]);
+        }
+        g_strfreev(warnings);
+    }
+    g_string_append(json,"],\"annotations\":[");
+    for(guint i=0;i<r->annotation_count;i++) {
+        const MiimeAnnotationStyleResult *a=&r->annotations[i];
+        if(i)g_string_append_c(json,',');
+        g_string_append(json,"{\"id\":"); json_append_string(json,a->annotation_id);
+        g_string_append_printf(json,",\"local_sample_count\":%u,\"contrast_hits\":%u,\"coverage\":%.6f,\"halo_applied\":%s,\"contrast_unresolved\":%s,\"override_warning\":%s,\"warnings\":[",
+            a->local_sample_count,a->contrast_hits,
+            a->local_sample_count?(double)a->contrast_hits/a->local_sample_count:1.0,
+            a->halo_applied?"true":"false",a->contrast_unresolved?"true":"false",a->override_warning?"true":"false");
+        if(a->contrast_unresolved)json_append_string(json,"contrast_unresolved");
+        if(a->contrast_unresolved&&a->override_warning)g_string_append_c(json,',');
+        if(a->override_warning)json_append_string(json,"override_warning");
+        g_string_append(json,"],\"ink\":"); json_append_rgba(json,a->ink_rgba);
+        g_string_append(json,"}");
+    }
+    g_string_append(json,"]}");
+    return g_string_free(json,FALSE);
+}
