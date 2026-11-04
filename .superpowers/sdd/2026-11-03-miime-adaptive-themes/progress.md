@@ -24,6 +24,9 @@ Ruling: Requested-only themed serialization must omit absent stroke_width as wel
 Ruling: Existing explicit font_size:0 keeps legacy fallback size (24 rendered pixels), not an invisible zero-size label; absence chooses style font size. Presence must survive roundtrip.
 Ruling: Extend layout with an options-aware metrics adapter if needed for new absolute font sizes, retaining existing public legacy wrappers and hashes.
 Ruling: No-options desktop paths remain legacy; saved JSON with explicit new options must render through the same options-aware path wherever that JSON is consumed.
+Ruling (final review): Desktop annotation files retain root-level requested render config on `MiimeWindow`; save, save-as, copy, annotation export, and `--annotations-out` preserve it. Explicit style/theme/background requests use options-aware export. Alias-only requests use the exact legacy export with the stored aesthetic temporarily applied and restored; absent config stays on the unchanged legacy route.
+Ruling (final review): Local contrast samples follow annotation geometry: line-like paths use bounded, deduplicated segment samples; rectangles and ellipses use contour samples; direct text uses measured text bounds and source pixels beneath the text. Crop and blur are excluded from contrast diagnostics. Direct text has no assumed label surface because the renderer draws it over source pixels.
+Ruling (final review): Marker contrast uses the rendered 0.35 opacity before deciding whether halo fallback is needed.
 Task 1: complete (0134e40..8ba73c0, review clean; full make test passes).
 Task 2 BASE: 8ba73c0.
 
@@ -38,3 +41,5 @@ Task 3 integration rulings: `MiimeRenderOptions.resolution` is borrowed and reus
 Task 4: complete locally and committed. MCP now validates and merges requested config independently from annotation state, supports patch inheritance/reset, emits requested-only state, and clears settings on prepare. MCP/headless opted-in requests share the options-aware layout renderer. The CLI forwards `--annotations` to headless config parsing. Legacy alias-only requests retain the 2.1 path; alias mapping and conflict diagnostics are covered under opt-in.
 
 Task 4 verification: RED observed for the missing MCP schema and headless options-renderer hash mismatch. `make test_mcp`, `make test_headless`, full `make test`, forced `make -B all`, and `git diff --check` pass. MCP integration compares identical auto-theme output through MCP, the headless API, and the desktop CLI.
+
+Final review: all four concrete findings in `review-full.diff` are addressed locally. Focused style/schema/render tests, full `make test`, forced `make -B all`, and `git diff --check` pass. Legacy render golden hashes remain covered by `test_render_legacy_hashes_without_options`; saved alias-only config has a separate no-GUI legacy export equivalence regression. No push performed.

@@ -5,6 +5,7 @@
 #include "canvas.h"
 #include "tools.h"
 #include "annotate.h"
+#include "style.h"
 
 typedef struct MiimeWindow MiimeWindow;
 
@@ -25,6 +26,8 @@ MiimeToolState *miime_window_get_tool_state(MiimeWindow *win);
 
 /* Get annotation stack. */
 MiimeAnnotationStack *miime_window_get_annot_stack(MiimeWindow *win);
+void miime_window_set_render_config(MiimeWindow *win, const MiimeStyleConfig *config);
+const MiimeStyleConfig *miime_window_get_render_config(const MiimeWindow *win);
 
 /* Toggle toolbar visibility (Tab key). */
 void miime_window_toggle_toolbar(MiimeWindow *win);

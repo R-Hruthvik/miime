@@ -1,7 +1,10 @@
 #include "style.h"
 #include <math.h>
+#include <pango/pangocairo.h>
 #include <stdio.h>
 #include <string.h>
+
+#define MIIME_OPTIONS_LABEL_FONT_FAMILY "DejaVu Sans"
 
 #define C(r,g,b,a) {(r)/255.0,(g)/255.0,(b)/255.0,(a)/255.0}
 static const MiimeStylePalette palettes[] = {
@@ -42,6 +45,60 @@ static double style_radius(MiimeDrawingStyle s) { const double v[]={4,8,10,2}; r
 static double style_halo(MiimeDrawingStyle s) { const double v[]={1,1.5,2,1}; return v[s]; }
 static double fill_alpha(MiimeDrawingStyle s) { const double v[]={.12,.18,.16,.08}; return v[s]; }
 static void copy_rgba(double *dst,const double *src) { memcpy(dst,src,4*sizeof(double)); }
+static void add_sample(int *xs,int *ys,guint *count,int x,int y,int x0,int y0,int w,int h) {
+    if(x<x0||y<y0||x>=x0+w||y>=y0+h||*count>=64)return;
+    for(guint i=0;i<*count;i++)if(xs[i]==x&&ys[i]==y)return;
+    xs[*count]=x;ys[*count]=y;(*count)++;
+}
+static void sample_polyline(const double *points,int point_count,int close_path,int x0,int y0,int w,int h,int *xs,int *ys,guint *count) {
+    int segments=point_count/2-1+!!close_path;double lengths[MIIME_MAX_POINTS/2+1],total=0;
+    for(int i=0;i<segments;i++){int j=(i+1)%(point_count/2);lengths[i]=hypot(points[j*2]-points[i*2],points[j*2+1]-points[i*2+1]);total+=lengths[i];}
+    guint n=MIN(64u,MAX(1u,(guint)ceil(total)));
+    for(guint i=0;i<n&&*count<64;i++){double d=((double)i+.5)*total/n;int seg=0;while(seg<segments-1&&d>lengths[seg]){d-=lengths[seg];seg++;}int j=(seg+1)%(point_count/2);double t=lengths[seg]>0?d/lengths[seg]:0;add_sample(xs,ys,count,(int)floor(points[seg*2]+t*(points[j*2]-points[seg*2])),(int)floor(points[seg*2+1]+t*(points[j*2+1]-points[seg*2+1])),x0,y0,w,h);}
+}
+static gboolean is_box_shape(MiimeAnnotationType t) {
+    return t==MIIME_ANNOT_RECT||t==MIIME_ANNOT_ELLIPSE||t==MIIME_ANNOT_CIRCLE||t==MIIME_ANNOT_HIGHLIGHT_BOX||t==MIIME_ANNOT_CALLOUT;
+}
+static void sample_annotation(const MiimeAnnotation *a,int x0,int y0,int w,int h,int *xs,int *ys,guint *count,double font_size) {
+    if(a->type==MIIME_ANNOT_TEXT&&a->point_count>=2) {
+        cairo_surface_t *measure=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1);cairo_t *cr=cairo_create(measure);PangoLayout *layout=pango_cairo_create_layout(cr);
+        PangoFontDescription *font=pango_font_description_new();pango_font_description_set_family(font,MIIME_OPTIONS_LABEL_FONT_FAMILY);pango_font_description_set_absolute_size(font,font_size*PANGO_SCALE);pango_layout_set_font_description(layout,font);pango_layout_set_text(layout,a->text,-1);
+        int tw=0,th=0;pango_layout_get_pixel_size(layout,&tw,&th);if(tw<1)tw=1;if(th<1)th=(int)ceil(font_size*1.3);
+        guint nx=MIN((guint)tw,8u),ny=MIN((guint)th,8u);
+        for(guint iy=0;iy<ny;iy++)for(guint ix=0;ix<nx;ix++)add_sample(xs,ys,count,(int)floor(a->points[0]+((double)ix+.5)*tw/nx),(int)floor(a->points[1]+((double)iy+.5)*th/ny),x0,y0,w,h);
+        g_object_unref(layout);pango_font_description_free(font);cairo_destroy(cr);cairo_surface_destroy(measure);return;
+    }
+    if(a->type==MIIME_ANNOT_PIN&&a->point_count==2) {
+        double radius=a->has_radius&&a->radius>0?a->radius:12.0;
+        guint n=MIN(64u,MAX(8u,(guint)ceil(2*G_PI*radius)));
+        for(guint i=0;i<n;i++){double t=2*G_PI*((double)i+.5)/n;add_sample(xs,ys,count,(int)floor(a->points[0]+radius*cos(t)),(int)floor(a->points[1]+radius*sin(t)),x0,y0,w,h);}
+        return;
+    }
+    if(a->type==MIIME_ANNOT_CALLOUT&&a->point_count>=4) {
+        int opposite=a->point_count>=8?4:2;double x=fmin(a->points[0],a->points[opposite]),y=fmin(a->points[1],a->points[opposite+1]);
+        double box_w=fabs(a->points[opposite]-a->points[0]),box_h=fabs(a->points[opposite+1]-a->points[1]);
+        double bx=x+box_w*.15,by=y+box_h*.15,bw=box_w*.7,bh=box_h*.7,cx=x+box_w*.5,base=fmin(8.0,bw*.3);
+        double path[]={bx,by,cx-base,by,cx,y,cx+base,by,bx+bw,by,bx+bw,by+bh,bx,by+bh};
+        sample_polyline(path,14,TRUE,x0,y0,w,h,xs,ys,count);
+        return;
+    }
+    if(is_box_shape(a->type)&&a->point_count>=4) {
+        int opposite=a->point_count>=8?4:2;double left=fmin(a->points[0],a->points[opposite]),right=fmax(a->points[0],a->points[opposite]),top=fmin(a->points[1],a->points[opposite+1]),bottom=fmax(a->points[1],a->points[opposite+1]);
+        guint n=64;double rx=(right-left)/2,ry=(bottom-top)/2,cx=(left+right)/2,cy=(top+bottom)/2;
+        if(a->type==MIIME_ANNOT_RECT||a->type==MIIME_ANNOT_HIGHLIGHT_BOX||a->type==MIIME_ANNOT_CALLOUT) {
+            double perimeter=2*((right-left)+(bottom-top));n=MIN(64u,MAX(4u,(guint)ceil(perimeter)));
+            for(guint i=0;i<n;i++){double d=((double)i+.5)*perimeter/n;double px,py;if(d<right-left){px=left+d;py=top;}else if((d-=right-left)<bottom-top){px=right;py=top+d;}else if((d-=bottom-top)<right-left){px=right-d;py=bottom;}else{d-=right-left;px=left;py=bottom-d;}add_sample(xs,ys,count,(int)floor(px),(int)floor(py),x0,y0,w,h);}
+        } else {
+            if(a->type==MIIME_ANNOT_CIRCLE)rx=ry=fmax(rx,ry);
+            double perimeter=2*G_PI*sqrt((rx*rx+ry*ry)/2);n=MIN(64u,MAX(8u,(guint)ceil(perimeter)));
+            for(guint i=0;i<n;i++){double t=2*G_PI*((double)i+.5)/n;add_sample(xs,ys,count,(int)floor(cx+rx*cos(t)),(int)floor(cy+ry*sin(t)),x0,y0,w,h);}
+        }
+        return;
+    }
+    if(a->point_count>=4&&a->point_count%2==0) {
+        sample_polyline(a->points,a->point_count,FALSE,x0,y0,w,h,xs,ys,count);
+    } else if(a->point_count>=2) add_sample(xs,ys,count,(int)floor(a->points[0]),(int)floor(a->points[1]),x0,y0,w,h);
+}
 static void annotation_ink(const MiimeAnnotation *a,const MiimeStylePalette *p,gboolean active,double *ink) {
     copy_rgba(ink,p->ink);
     if (active && a->has_role) {
@@ -117,58 +174,32 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
         /* Explicit zero retains the legacy 24px fallback while remaining an intentional override. */
         z->font_size=a->has_font_size?(a->font_size>0?a->font_size:24):style_font(o->resolved_drawing_style);
         z->radius=a->has_radius?a->radius:style_radius(o->resolved_drawing_style); z->halo_width=style_halo(o->resolved_drawing_style);
-        z->has_fill=a->fill!=0; z->has_label_surface=TRUE;
+        z->has_fill=a->fill!=0; z->has_label_surface=a->label_text[0]!='\0';
         if(a->has_fill_color){z->fill_rgba[0]=a->fill_r;z->fill_rgba[1]=a->fill_g;z->fill_rgba[2]=a->fill_b;z->fill_rgba[3]=a->fill_a;}
         if(a->has_label_surface)copy_rgba(z->label_surface_rgba,a->label_surface_rgba);
+        if(a->type==MIIME_ANNOT_CROP||a->type==MIIME_ANNOT_BLUR)continue;
         gboolean has_override=a->has_color||a->has_fill_color||a->has_label_surface||a->has_font_size;
-        /* Sample a flat, deterministic grid over annotation bounds. For path annotations,
-         * replace it with samples distributed over stored segments so empty interiors
-         * cannot hide contrast. */
-        int ax0=x0, ay0=y0, aw=w, ah=h;
-        if(a->point_count>=2&&a->point_count%2==0){
-            double minx=a->points[0],maxx=minx,miny=a->points[1],maxy=miny;
-            for(int q=2;q<a->point_count;q+=2){minx=fmin(minx,a->points[q]);maxx=fmax(maxx,a->points[q]);miny=fmin(miny,a->points[q+1]);maxy=fmax(maxy,a->points[q+1]);}
-            ax0=MAX(x0,(int)floor(minx));ay0=MAX(y0,(int)floor(miny));
-            int ax1=MIN(x0+w,(int)ceil(maxx)+1),ay1=MIN(y0+h,(int)ceil(maxy)+1);
-            aw=MAX(0,ax1-ax0);ah=MAX(0,ay1-ay0);
-        }
-        guint lx=MIN((guint)MAX(aw,1),8u),ly=MIN((guint)MAX(ah,1),8u);
+        /* Sample the visible text/shape geometry, bounded to 64 unique source pixels. */
         int sample_x[64],sample_y[64];
-        if(a->point_count>=4 && a->point_count%2==0) {
-            int segs=a->point_count/2-1; double lengths[MIIME_MAX_POINTS/2],total=0;
-            for(int j=0;j<segs;j++){double dx=a->points[(j+1)*2]-a->points[j*2],dy=a->points[(j+1)*2+1]-a->points[j*2+1];lengths[j]=hypot(dx,dy);total+=lengths[j];}
-            guint count=MIN(64u,MAX(1u,(guint)ceil(total)));
-            for(guint q=0;q<count;q++) {
-                double dist=((double)q+.5)*total/count; int seg=0; while(seg<segs-1&&dist>lengths[seg]){dist-=lengths[seg];seg++;}
-                double t=lengths[seg]>0?dist/lengths[seg]:0; int px=(int)floor(a->points[seg*2]+t*(a->points[(seg+1)*2]-a->points[seg*2])); int py=(int)floor(a->points[seg*2+1]+t*(a->points[(seg+1)*2+1]-a->points[seg*2+1]));
-                if(px<x0||py<y0||px>=x0+w||py>=y0+h)continue;
-                gboolean duplicate=FALSE;
-                for(guint q=0;q<z->local_sample_count;q++)if(sample_x[q]==px&&sample_y[q]==py){duplicate=TRUE;break;}
-                if(duplicate)continue;
-                sample_x[z->local_sample_count]=px;sample_y[z->local_sample_count]=py;z->local_sample_count++;
-            }
-        } else {
-            for(guint iy=0;iy<ly;iy++)for(guint ix=0;ix<lx;ix++) {
-                int px=ax0+coord(ix,(guint)MAX(aw,1),lx),py=ay0+coord(iy,(guint)MAX(ah,1),ly);gboolean duplicate=FALSE;
-                for(guint q=0;q<z->local_sample_count;q++)if(sample_x[q]==px&&sample_y[q]==py){duplicate=TRUE;break;}
-                if(duplicate||px<x0||py<y0||px>=x0+w||py>=y0+h)continue;
-                sample_x[z->local_sample_count]=px;sample_y[z->local_sample_count]=py;z->local_sample_count++;
-            }
+        if(a->type==MIIME_ANNOT_TEXT||a->type==MIIME_ANNOT_PIN||is_box_shape(a->type)||a->point_count>=4) {
+            sample_annotation(a,x0,y0,w,h,sample_x,sample_y,&z->local_sample_count,z->font_size);
         }
-        gboolean is_text=(a->type==MIIME_ANNOT_TEXT||a->label_text[0]);
+        gboolean is_text=(a->type==MIIME_ANNOT_TEXT||a->label_text[0]!='\0');
+        gboolean has_text_surface=a->label_text[0]!='\0';
         double target=is_text?o->text_target:o->shape_target;
         o->contrast_total+=z->local_sample_count;
         for(guint q=0;q<z->local_sample_count;q++) {
             double sr,sg,sb,source[3],surface[3],foreground[3];
             sample_rgb(data,stride,sample_x[q],sample_y[q],bg,&sr,&sg,&sb);source[0]=sr;source[1]=sg;source[2]=sb;
             double ratio;
-            if(is_text) {
+            if(has_text_surface) {
                 composite_rgba(z->label_surface_rgba,source,surface);
                 double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]};
                 composite_rgba(ink,surface,foreground);
                 ratio=contrast(lum(foreground[0],foreground[1],foreground[2]),lum(surface[0],surface[1],surface[2]));
             } else {
-                double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]};
+                double marker_alpha=(a->has_ink&&a->ink==MIIME_INK_MARKER)?.35:1.0;
+                double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]*marker_alpha};
                 composite_rgba(ink,source,foreground);
                 ratio=contrast(lum(foreground[0],foreground[1],foreground[2]),lum(source[0],source[1],source[2]));
             }
@@ -180,7 +211,8 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
                 z->halo_applied=TRUE;
                 const double halo_edges[2][3]={{1,1,1},{0,0,0}};
                 for(int edge=0;edge<2;edge++) {
-                    double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]}, halo_fg[3];
+                    double marker_alpha=(a->has_ink&&a->ink==MIIME_INK_MARKER)?.35:1.0;
+                    double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]*marker_alpha}, halo_fg[3];
                     composite_rgba(ink,halo_edges[edge],halo_fg);
                     double halo_ratio=contrast(lum(halo_fg[0],halo_fg[1],halo_fg[2]),lum(halo_edges[edge][0],halo_edges[edge][1],halo_edges[edge][2]));
                     if(halo_ratio>=target){z->contrast_hits++;o->contrast_hits++;break;}

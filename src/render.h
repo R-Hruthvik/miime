@@ -47,6 +47,13 @@ cairo_surface_t *miime_render_export_with_options(MiimeImage *img,
                                      const MiimeRenderOptions *options,
                                      int *out_w, int *out_h);
 
+/* Export a saved render request, preserving the legacy path for alias-only and
+ * absent configs while activating the options renderer for explicit new tokens. */
+cairo_surface_t *miime_render_export_with_config(MiimeImage *img,
+                                     const MiimeAnnotationStack *stack,
+                                     const MiimeStyleConfig *config,
+                                     int *out_w, int *out_h);
+
 /* Layout-aware render/export. In dry_run mode no surface is produced and the
  * returned JSON describes placements. In render mode JSON is NULL and the
  * rendered surface is returned through out_surface. */

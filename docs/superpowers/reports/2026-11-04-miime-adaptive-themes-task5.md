@@ -8,6 +8,14 @@ The final integration pass also closed a Task 4 inheritance gap: ordinary render
 
 The Task 5 review follow-up now reports zero-sample coverage as JSON `null` at both aggregate and per-annotation levels. Regressions cover an annotation outside a valid crop and an empty crop; neither is represented as full coverage.
 
+## Final review follow-up
+
+Desktop annotation JSON now restores root-level requested render config, and shutdown/export/save/copy preserve and consume it. Config-aware export uses options rendering for explicit new tokens, retains exact legacy export for alias-only and absent config, and restores the prior process aesthetic after alias export. Added no-GUI checks for config round-trip and alias-only legacy export equivalence.
+
+Contrast sampling now follows actual annotation geometry with bounded, deduplicated local samples: line-like paths use their segments; rectangles, ellipses, circles, and pins use contours; direct text uses measured bounds and samples source pixels beneath it. Crop and blur operations are excluded. Direct text does not assume a theme label surface, matching the renderer. Marker contrast accounts for its rendered 0.35 alpha before halo decisions.
+
+Focused style/schema/render tests, full `make test`, forced `make -B all`, and `git diff --check` passed after these changes. The existing legacy export/layout hashes remain unchanged.
+
 ## Verification
 
 - `make test` — passed, including schema, bidirectional, render legacy hash, headless, MCP integration, style, and grounding tests.

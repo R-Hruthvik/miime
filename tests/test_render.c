@@ -197,6 +197,19 @@ static void test_render_legacy_hashes_without_options(void) {
     miime_annot_stack_free(stack); miime_image_free(img); remove("/tmp/miime_legacy_hash.png");
 }
 
+static void test_saved_config_alias_only_preserves_legacy_export(void) {
+    GdkPixbuf *pb=gdk_pixbuf_new(GDK_COLORSPACE_RGB,FALSE,8,48,36);gdk_pixbuf_fill(pb,0x90a0b0ff);
+    gdk_pixbuf_save(pb,"/tmp/miime_alias_config.png","png",NULL,NULL);g_object_unref(pb);
+    MiimeImage *img=miime_image_load("/tmp/miime_alias_config.png");assert(img);
+    MiimeAnnotationStack *stack=miime_annot_stack_new();MiimeAnnotation a={0};a.type=MIIME_ANNOT_LINE;a.point_count=4;a.points[0]=3;a.points[1]=4;a.points[2]=40;a.points[3]=30;miime_annot_stack_push(stack,a);
+    MiimeStyleConfig config={0};config.has_aesthetic_style=TRUE;config.aesthetic_style=MIIME_AESTHETIC_CLEAN_TECHNICAL;
+    miime_render_set_aesthetic(MIIME_AESTHETIC_ROUGH_SKETCH);MiimeAestheticStyle before=miime_render_get_aesthetic();
+    cairo_surface_t *actual=miime_render_export_with_config(img,stack,&config,NULL,NULL);assert(actual&&miime_render_get_aesthetic()==before);
+    miime_render_set_aesthetic(MIIME_AESTHETIC_CLEAN_TECHNICAL);cairo_surface_t *expected=miime_render_export(img,stack,NULL,NULL);assert(expected);
+    char *actual_hash=surface_sha256(actual),*expected_hash=surface_sha256(expected);assert(strcmp(actual_hash,expected_hash)==0);g_free(actual_hash);g_free(expected_hash);
+    cairo_surface_destroy(actual);cairo_surface_destroy(expected);miime_render_set_aesthetic(before);miime_annot_stack_free(stack);miime_image_free(img);remove("/tmp/miime_alias_config.png");
+}
+
 static void test_options_renderer_applies_resolved_appearance_without_mutation(void) {
     GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 80, 60);
     gdk_pixbuf_fill(pb, 0x202020ff);
@@ -1210,6 +1223,7 @@ static void test_layout_export_and_dry_run_cap(void) {
 
 int main(void) {
     test_render_legacy_hashes_without_options();
+    test_saved_config_alias_only_preserves_legacy_export();
     test_render_shapes_offscreen();
     test_render_annotation_vocabulary();
     test_freehand_is_smoothed_and_deterministic();

@@ -109,6 +109,8 @@
 
 **Task 5 review follow-up (2026-11-04, empty coverage):** Aggregate and per-annotation coverage serialize as JSON `null` when their sample denominator is zero. Regression coverage includes an annotation outside the crop and an empty crop, preserving the distinction between no data and full contrast coverage.
 
+**Final review follow-up (2026-11-04):** Desktop annotation import now restores root-level requested render config, and shutdown/export/save/copy preserve and consume it. Config-aware export activates the options renderer for explicit new tokens, keeps alias-only requests on the exact legacy renderer with their stored aesthetic, and leaves absent config on the legacy path. Contrast sampling follows text bounds and drawn shape contours, uses source beneath direct text, skips crop/blur operations, and applies marker's rendered 0.35 alpha before halo decisions. Added regression coverage for config-root roundtrip, alias-only legacy export, contour-vs-diagonal sampling, direct-text source contrast, marker alpha, and crop exclusion.
+
 ## Final acceptance
 
 Before implementation is marked complete, all tests above pass; style/theme request config round-trips idempotently; missing patch config inherits; explicit reset restores byte-identical legacy rendering; dry-run/render resolution metadata matches; existing desktop, headless, and MCP callers retain their current defaults.

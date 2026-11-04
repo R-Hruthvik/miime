@@ -800,6 +800,25 @@ cairo_surface_t *miime_render_export_with_options(MiimeImage *img,
     return surface;
 }
 
+cairo_surface_t *miime_render_export_with_config(MiimeImage *img,
+                                     const MiimeAnnotationStack *stack,
+                                     const MiimeStyleConfig *config,
+                                     int *out_w,int *out_h) {
+    if(config&&(config->has_drawing_style||config->has_theme||config->has_analysis_background)) {
+        MiimeRenderOptions options={.requested=*config,.resolution=NULL};
+        return miime_render_export_with_options(img,stack,&options,out_w,out_h);
+    }
+    if(config&&config->has_aesthetic_style) {
+        MiimeAestheticStyle old=miime_render_get_aesthetic();
+        miime_render_set_aesthetic(config->aesthetic_style==MIIME_AESTHETIC_CLEAN_TECHNICAL
+                                   ?MIIME_AESTHETIC_CLEAN_TECHNICAL:MIIME_AESTHETIC_ROUGH_SKETCH);
+        cairo_surface_t *surface=miime_render_export(img,stack,out_w,out_h);
+        miime_render_set_aesthetic(old);
+        return surface;
+    }
+    return miime_render_export(img,stack,out_w,out_h);
+}
+
 cairo_surface_t *miime_render_export(MiimeImage *img,
                                      const MiimeAnnotationStack *stack,
                                      int *out_w, int *out_h) {

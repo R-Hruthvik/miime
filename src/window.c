@@ -18,6 +18,7 @@ struct MiimeWindow {
     MiimeCanvas          *canvas;
     MiimeToolState       *tool_state;
     MiimeAnnotationStack *annot_stack;
+    MiimeStyleConfig render_config;
     GtkWidget            *tool_buttons[9];
     char                 *current_path;
 };
@@ -125,7 +126,7 @@ static void save_file_dialog_finish(GObject *source, GAsyncResult *res, gpointer
     MiimeImage *img = miime_canvas_get_image(win->canvas);
     if (img) {
         int w, h;
-        cairo_surface_t *surf = miime_render_export(img, win->annot_stack, &w, &h);
+        cairo_surface_t *surf=miime_render_export_with_config(img,win->annot_stack,&win->render_config,&w,&h);
         if (surf) {
             miime_render_save_to_file(surf, path);
             cairo_surface_destroy(surf);
@@ -146,7 +147,7 @@ static void export_annotations_dialog_finish(GObject *source, GAsyncResult *res,
     char *path = g_file_get_path(file);
     g_object_unref(file);
     if (!path) return;
-    char *json = miime_schema_serialize(win->annot_stack);
+    char *json = miime_schema_serialize_with_config(win->annot_stack,&win->render_config);
     if (json) {
         g_file_set_contents(path, json, -1, NULL);
         g_free(json);
@@ -160,6 +161,7 @@ MiimeWindow *miime_window_new(GtkApplication *app) {
 
     win->tool_state   = miime_tool_state_new();
     win->annot_stack  = miime_annot_stack_new();
+    win->render_config=(MiimeStyleConfig){0};
     win->canvas       = miime_canvas_new();
     win->current_path = NULL;
 
@@ -325,6 +327,14 @@ MiimeAnnotationStack *miime_window_get_annot_stack(MiimeWindow *win) {
     return win ? win->annot_stack : NULL;
 }
 
+void miime_window_set_render_config(MiimeWindow *win,const MiimeStyleConfig *config) {
+    if(win)win->render_config=config?*config:(MiimeStyleConfig){0};
+}
+
+const MiimeStyleConfig *miime_window_get_render_config(const MiimeWindow *win) {
+    return win?&win->render_config:NULL;
+}
+
 void miime_window_toggle_toolbar(MiimeWindow *win) {
     if (!win || !win->toolbar) return;
     gboolean vis = gtk_widget_get_visible(win->toolbar);
@@ -353,7 +363,7 @@ void miime_window_save(MiimeWindow *win) {
     if (!img) return;
 
     int w, h;
-    cairo_surface_t *surf = miime_render_export(img, win->annot_stack, &w, &h);
+    cairo_surface_t *surf=miime_render_export_with_config(img,win->annot_stack,&win->render_config,&w,&h);
     if (surf) {
         miime_render_save_to_file(surf, win->current_path);
         cairo_surface_destroy(surf);
@@ -384,7 +394,7 @@ void miime_window_copy_clipboard(MiimeWindow *win) {
     if (!img) return;
 
     int w, h;
-    cairo_surface_t *surf = miime_render_export(img, win->annot_stack, &w, &h);
+    cairo_surface_t *surf=miime_render_export_with_config(img,win->annot_stack,&win->render_config,&w,&h);
     if (surf) {
         GdkClipboard *cb = gdk_display_get_clipboard(gtk_widget_get_display(win->gtk_window));
         miime_clipboard_copy_surface(cb, surf);

@@ -44,8 +44,8 @@ static void test_terminal_and_photo_fixtures(void) {
     r=resolve(s,&c);MiimeStyleResolution*r2=resolve(s,&c);assert(r&&r2&&r->resolved_theme==r2->resolved_theme&&r->image_sample_count==r2->image_sample_count);assert(r->resolved_theme>=MIIME_THEME_LIGHT&&r->resolved_theme<=MIIME_THEME_NEUTRAL);miime_style_resolution_free(r);miime_style_resolution_free(r2);cairo_surface_destroy(s);
 }
 static void test_label_contrast_uses_surface_pair(void) {
-    cairo_surface_t*s=rgb_surface(32,32,1,1,1);MiimeStyleConfig c={0};c.has_theme=TRUE;c.theme=MIIME_THEME_LIGHT;MiimeAnnotationStack*stack=miime_annot_stack_new();MiimeAnnotation a={0};a.type=MIIME_ANNOT_TEXT;strcpy(a.text,"label");miime_annot_stack_push(stack,a);
-    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].local_sample_count>0&&!r->annotations[0].contrast_unresolved);assert(r->annotations[0].has_label_surface&&r->annotations[0].label_surface_rgba[3]==1.0);miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
+    cairo_surface_t*s=rgb_surface(32,32,1,1,1);MiimeStyleConfig c={0};c.has_theme=TRUE;c.theme=MIIME_THEME_LIGHT;MiimeAnnotationStack*stack=miime_annot_stack_new();MiimeAnnotation a={0};a.type=MIIME_ANNOT_TEXT;a.point_count=2;a.points[0]=2;a.points[1]=2;strcpy(a.text,"label");miime_annot_stack_push(stack,a);
+    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].local_sample_count>0&&!r->annotations[0].contrast_unresolved);assert(!r->annotations[0].has_label_surface);miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
 }
 static void test_alpha_composite_and_text_surface_alpha(void) {
     cairo_surface_t*s=rgb_surface(8,8,1,1,1);MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;MiimeAnnotationStack*stack=miime_annot_stack_new();
@@ -77,7 +77,7 @@ static void test_shape_halo_rescues_only_when_edge_contrast_passes(void) {
     assert(strstr(r->warning_codes,"contrast_unresolved")&&strstr(r->warning_codes,"override_warning"));
     assert(r->contrast_hits==rescued->local_sample_count&&r->contrast_total==rescued->local_sample_count+unresolved->local_sample_count);
     miime_style_resolution_free(r);miime_annot_stack_free(stack);
-    stack=miime_annot_stack_new();a=(MiimeAnnotation){0};a.type=MIIME_ANNOT_TEXT;strcpy(a.text,"label");a.has_color=TRUE;a.color_r=a.color_g=a.color_b=0;a.color_a=.15;miime_annot_stack_push(stack,a);
+    stack=miime_annot_stack_new();a=(MiimeAnnotation){0};a.type=MIIME_ANNOT_TEXT;a.point_count=2;a.points[0]=2;a.points[1]=2;strcpy(a.text,"label");a.has_color=TRUE;a.color_r=a.color_g=a.color_b=0;a.color_a=.15;miime_annot_stack_push(stack,a);
     r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].contrast_unresolved&&!r->annotations[0].halo_applied);
     miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
 }
@@ -95,7 +95,7 @@ static void test_exact_palettes_and_style_tokens(void) {
 static void test_annotations_role_override_and_path_coverage(void) {
     cairo_surface_t*s=rgb_surface(80,50,.5,.5,.5);MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;MiimeAnnotationStack*stack=miime_annot_stack_new();
     MiimeAnnotation a={0};strcpy(a.json_id,"warning");a.type=MIIME_ANNOT_LINE;a.role=MIIME_ROLE_WARNING;a.has_role=TRUE;a.point_count=4;a.points[0]=5;a.points[1]=25;a.points[2]=75;a.points[3]=25;miime_annot_stack_push(stack,a);
-    a=(MiimeAnnotation){0};strcpy(a.json_id,"override");a.type=MIIME_ANNOT_RECT;a.has_color=TRUE;a.color_r=1;a.color_g=0;a.color_b=1;a.color_a=.15;a.has_label_surface=TRUE;a.label_surface_rgba[0]=1;a.label_surface_rgba[1]=1;a.label_surface_rgba[2]=1;a.label_surface_rgba[3]=1;miime_annot_stack_push(stack,a);
+    a=(MiimeAnnotation){0};strcpy(a.json_id,"override");a.type=MIIME_ANNOT_RECT;a.point_count=4;a.points[0]=10;a.points[1]=10;a.points[2]=30;a.points[3]=30;a.has_color=TRUE;a.color_r=1;a.color_g=0;a.color_b=1;a.color_a=.01;a.has_label_surface=TRUE;a.label_surface_rgba[0]=1;a.label_surface_rgba[1]=1;a.label_surface_rgba[2]=1;a.label_surface_rgba[3]=1;miime_annot_stack_push(stack,a);
     MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotation_count==2);assert(r->annotations[0].ink_rgba[0]==miime_style_palette(MIIME_THEME_LIGHT)->warning[0]);assert(r->annotations[0].local_sample_count>1&&r->annotations[0].local_sample_count<=64);assert(r->annotations[1].ink_rgba[0]==1&&r->annotations[1].ink_rgba[2]==1&&r->annotations[1].override_warning);assert(strstr(r->warning_codes,"override_warning"));assert(r->contrast_total==r->contrast_hits+r->annotations[1].local_sample_count||r->contrast_total>=r->contrast_hits);miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
 }
 static void test_roles_require_active_resolver_and_alias_conflict(void) {
@@ -131,6 +131,33 @@ static void test_zero_sample_coverage_is_no_data(void) {
     char*json=miime_style_resolution_to_json(r,crop,0);assert(json);assert(strstr(json,"\"hits\":0,\"total\":0,\"coverage\":null"));assert(strstr(json,"\"local_sample_count\":0,\"contrast_hits\":0,\"coverage\":null"));g_free(json);miime_style_resolution_free(r);miime_annot_stack_free(stack);
     r=miime_style_resolve(s,&c,NULL,(MiimeCrop){30,30,5,5,TRUE});assert(r&&r->contrast_total==0&&r->image_sample_count==0&&!strcmp(r->policy,"empty_crop"));json=miime_style_resolution_to_json(r,(MiimeCrop){30,30,5,5,TRUE},0);assert(json&&strstr(json,"\"hits\":0,\"total\":0,\"coverage\":null"));g_free(json);miime_style_resolution_free(r);cairo_surface_destroy(s);
 }
+static void test_shape_samples_follow_geometry_not_all_segments(void) {
+    cairo_surface_t*s=rgb_surface(64,64,1,1,1);cairo_t*cr=cairo_create(s);cairo_set_source_rgb(cr,0,0,0);cairo_rectangle(cr,28,28,8,8);cairo_fill(cr);cairo_destroy(cr);MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;
+    MiimeAnnotationStack*stack=miime_annot_stack_new();MiimeAnnotation a={0};
+    a.type=MIIME_ANNOT_RECT;a.point_count=4;a.points[0]=8;a.points[1]=8;a.points[2]=56;a.points[3]=56;miime_annot_stack_push(stack,a);
+    a=(MiimeAnnotation){0};a.type=MIIME_ANNOT_ELLIPSE;a.point_count=4;a.points[0]=8;a.points[1]=8;a.points[2]=56;a.points[3]=56;miime_annot_stack_push(stack,a);
+    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotation_count==2);
+    for(guint i=0;i<2;i++){assert(r->annotations[i].local_sample_count>8);assert(r->annotations[i].contrast_hits==r->annotations[i].local_sample_count&&!r->annotations[i].contrast_unresolved&&!r->annotations[i].halo_applied);}
+    miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
+}
+static void test_text_samples_use_text_bounds_and_source_surface(void) {
+    cairo_surface_t*s=rgb_surface(64,64,0,0,0);MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;MiimeAnnotationStack*stack=miime_annot_stack_new();MiimeAnnotation a={0};
+    a.type=MIIME_ANNOT_TEXT;a.point_count=2;a.points[0]=10;a.points[1]=12;a.has_font_size=TRUE;a.font_size=8;strcpy(a.text,"i");miime_annot_stack_push(stack,a);
+    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].local_sample_count>0&&r->annotations[0].local_sample_count<64&&r->annotations[0].contrast_unresolved);
+    miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
+}
+static void test_marker_alpha_matches_rendered_opacity_before_halo(void) {
+    cairo_surface_t*s=rgb_surface(32,32,0,0,0);MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;MiimeAnnotationStack*stack=miime_annot_stack_new();MiimeAnnotation a={0};
+    a.type=MIIME_ANNOT_LINE;a.point_count=4;a.points[0]=2;a.points[1]=16;a.points[2]=30;a.points[3]=16;a.has_ink=TRUE;a.ink=MIIME_INK_MARKER;a.has_color=TRUE;a.color_r=a.color_g=a.color_b=1;a.color_a=.8;miime_annot_stack_push(stack,a);
+    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].halo_applied&&r->annotations[0].contrast_unresolved);
+    miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
+}
+static void test_crop_annotation_is_excluded_from_contrast(void) {
+    cairo_surface_t*s=rgb_surface(20,20,.5,.5,.5);MiimeStyleConfig c={0};c.theme=MIIME_THEME_LIGHT;c.has_theme=TRUE;MiimeAnnotationStack*stack=miime_annot_stack_new();MiimeAnnotation a={0};
+    a.type=MIIME_ANNOT_CROP;a.point_count=4;a.points[0]=2;a.points[1]=2;a.points[2]=18;a.points[3]=18;miime_annot_stack_push(stack,a);
+    MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->contrast_total==0&&r->annotations[0].local_sample_count==0);
+    miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
+}
 int main(void) {
-    test_auto_theme_thresholds_and_ties();test_auto_style_edge_threshold();test_sampler_caps_and_even_spacing();test_style_alpha_composite_uses_white_analysis_bg();test_exact_palettes_and_style_tokens();test_terminal_and_photo_fixtures();test_label_contrast_uses_surface_pair();test_alpha_composite_and_text_surface_alpha();test_per_sample_coverage_and_path_dedup();test_shape_halo_rescues_only_when_edge_contrast_passes();test_explicit_zero_font_size_uses_legacy_fallback();test_annotations_role_override_and_path_coverage();test_roles_require_active_resolver_and_alias_conflict();test_aesthetic_alias_overrides_auto_theme_style();test_crop_and_empty_crop();test_diagnostics_serialize_requested_and_resolved_fields();test_zero_sample_coverage_is_no_data();puts("style tests passed");return 0;
+    test_auto_theme_thresholds_and_ties();test_auto_style_edge_threshold();test_sampler_caps_and_even_spacing();test_style_alpha_composite_uses_white_analysis_bg();test_exact_palettes_and_style_tokens();test_terminal_and_photo_fixtures();test_label_contrast_uses_surface_pair();test_alpha_composite_and_text_surface_alpha();test_per_sample_coverage_and_path_dedup();test_shape_halo_rescues_only_when_edge_contrast_passes();test_explicit_zero_font_size_uses_legacy_fallback();test_annotations_role_override_and_path_coverage();test_roles_require_active_resolver_and_alias_conflict();test_aesthetic_alias_overrides_auto_theme_style();test_crop_and_empty_crop();test_diagnostics_serialize_requested_and_resolved_fields();test_zero_sample_coverage_is_no_data();test_shape_samples_follow_geometry_not_all_segments();test_text_samples_use_text_bounds_and_source_surface();test_marker_alpha_matches_rendered_opacity_before_halo();test_crop_annotation_is_excluded_from_contrast();puts("style tests passed");return 0;
 }

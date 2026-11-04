@@ -5,6 +5,15 @@
 #include <string.h>
 
 int main(void) {
+    const char *saved_desktop_json="{\"annotations\":[{\"type\":\"line\",\"points\":[1,2,5,6]}],\"theme\":\"dark\",\"drawing_style\":\"editorial\"}";
+    MiimeAnnotationStack *desktop_stack=miime_schema_deserialize(saved_desktop_json,NULL);MiimeStyleConfig desktop_config={0};
+    assert(desktop_stack&&miime_schema_deserialize_render_config(saved_desktop_json,&desktop_config,NULL));
+    assert(desktop_config.has_theme&&desktop_config.theme==MIIME_THEME_DARK&&desktop_config.has_drawing_style&&desktop_config.drawing_style==MIIME_DRAW_EDITORIAL);
+    char *desktop_saved=miime_schema_serialize_with_config(desktop_stack,&desktop_config);MiimeStyleConfig desktop_roundtrip={0};
+    assert(desktop_saved&&miime_schema_deserialize_render_config(desktop_saved,&desktop_roundtrip,NULL));
+    assert(desktop_roundtrip.has_theme&&desktop_roundtrip.theme==MIIME_THEME_DARK&&desktop_roundtrip.has_drawing_style&&desktop_roundtrip.drawing_style==MIIME_DRAW_EDITORIAL);
+    g_free(desktop_saved);miime_annot_stack_free(desktop_stack);
+
     MiimeStyleConfig cfg = {0};
     cfg.drawing_style = MIIME_DRAW_EDITORIAL; cfg.has_drawing_style = TRUE;
     cfg.theme = MIIME_THEME_AUTO; cfg.has_theme = TRUE;

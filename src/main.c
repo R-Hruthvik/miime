@@ -69,6 +69,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
                 buf[sz] = '\0';
                 GError *err = NULL;
                 MiimeAnnotationStack *loaded = miime_schema_deserialize(buf, &err);
+                MiimeStyleConfig render_config={0};
+                if(miime_schema_deserialize_render_config(buf,&render_config,NULL))
+                    miime_window_set_render_config(g_win,&render_config);
                 if (loaded) {
                     MiimeAnnotationStack *st = miime_window_get_annot_stack(g_win);
                     if (st) {
@@ -107,7 +110,7 @@ static void on_shutdown(GtkApplication *app, gpointer user_data) {
     (void)user_data;
     if (g_annotations_out_path && g_win) {
         MiimeAnnotationStack *st = miime_window_get_annot_stack(g_win);
-        char *json = miime_schema_serialize(st);
+        char *json = miime_schema_serialize_with_config(st,miime_window_get_render_config(g_win));
         if (json) {
             g_file_set_contents(g_annotations_out_path, json, -1, NULL);
             g_free(json);
