@@ -147,7 +147,10 @@ int main(int argc, char *argv[]) {
     for (int i = 1; i < fargc; i++) {
         if (strcmp(fargv[i], "--headless") == 0) {
             const char *input = NULL;
-            const char *annotations = NULL;
+            /* --annotations is filtered into g_annotations_path above so GTK
+             * does not see the application-specific option. Reuse that value
+             * for the headless route instead of silently dropping the JSON. */
+            const char *annotations = g_annotations_path;
             const char *output = NULL;
             for (int j = i + 1; j < fargc; j++) {
                 if (strcmp(fargv[j], "--annotations") == 0 && j + 1 < fargc) {

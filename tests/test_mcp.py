@@ -1,4 +1,4 @@
-import json, subprocess, base64, os, sys, io, struct
+import json, subprocess, base64, os, sys, io, struct, hashlib
 
 proc = subprocess.Popen(["./miime-mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
 
@@ -33,6 +33,8 @@ for tool in tools_by_name.values():
 render_schema = tools_by_name["render_ux_annotations"]["inputSchema"]
 assert "freehand" in render_schema["properties"]["annotations"]["items"]["properties"]["type"]["enum"]
 assert render_schema["properties"]["dry_run"] == {"type": "boolean"}
+for config_field in ("drawing_style", "aesthetic_style", "theme", "analysis_background", "reset_render_config"):
+    assert config_field in render_schema["properties"], config_field
 assert "dry_run" not in render_schema.get("required", [])
 annotation_schema = render_schema["properties"]["annotations"]["items"]["properties"]
 assert len(annotation_schema["stroke_width"]["oneOf"]) == 2
@@ -66,6 +68,75 @@ send({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"prepare_ux_
 r = recv()
 assert "result" in r, r
 assert any(c.get("type")=="image" for c in r["result"]["content"])
+
+# The headless JSON route and MCP must share the same automatic-theme layout
+# and export pixels for the same source and requested config.
+headless_case = {"drawing_style":"editorial", "theme":"auto", "annotations":[
+    {"id":"x", "type":"rect", "points":[10,10,50,50], "text":""}]}
+send({"jsonrpc":"2.0","id":65,"method":"tools/call","params":{"name":"render_ux_annotations","arguments":headless_case}})
+headless_mcp = recv()
+assert "result" in headless_mcp, headless_mcp
+mcp_png = base64.b64decode(next(c["data"] for c in headless_mcp["result"]["content"] if c.get("type")=="image"))
+with open("/tmp/opencode/test_headless_out.png", "rb") as headless_file:
+    headless_png = headless_file.read()
+assert hashlib.sha256(mcp_png).digest() == hashlib.sha256(headless_png).digest()
+cli_annotations = "/tmp/opencode/test_headless_cli.json"
+cli_output = "/tmp/opencode/test_headless_cli.png"
+with open(cli_annotations, "w", encoding="utf-8") as cli_file:
+    json.dump(headless_case, cli_file)
+subprocess.run(["./miime", "--headless", img, "--annotations", cli_annotations, "-o", cli_output], check=True)
+with open(cli_output, "rb") as cli_file:
+    assert hashlib.sha256(mcp_png).digest() == hashlib.sha256(cli_file.read()).digest()
+
+# Explicit style config opts into the resolver; a legacy alias by itself keeps
+# the 2.1 path, while alias mapping and conflict diagnostics apply under opt-in.
+def dry_render(args):
+    call = {"jsonrpc":"2.0", "id": 57, "method":"tools/call",
+            "params":{"name":"render_ux_annotations", "arguments":dict(args, dry_run=True)}}
+    send(call)
+    response = recv()
+    assert "result" in response, response
+    return json.loads(next(c["text"] for c in response["result"]["content"] if c.get("type")=="text"))
+
+alias_only = dry_render({"aesthetic_style":"clean_technical", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
+assert "resolution" not in alias_only, alias_only
+alias_optin = dry_render({"theme":"dark", "aesthetic_style":"clean_technical", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
+assert alias_optin["resolution"]["drawing_style"] == "technical", alias_optin
+conflict = dry_render({"drawing_style":"editorial", "theme":"dark", "aesthetic_style":"clean_technical", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
+assert conflict["resolution"]["drawing_style"] == "editorial", conflict
+assert "style_alias_conflict" in conflict["resolution"]["warning_codes"], conflict
+
+# Patch config is requested state: omitted fields inherit, reset clears before
+# fields in the same request apply, and the reset command itself is not saved.
+send({"jsonrpc":"2.0","id":58,"method":"tools/call","params":{"name":"patch_ux_annotations","arguments":{"theme":"dark","drawing_style":"editorial","annotations":[{"type":"rect","points":[10,10,30,30]}],"dry_run":True}}})
+assert "result" in recv()
+send({"jsonrpc":"2.0","id":59,"method":"tools/call","params":{"name":"patch_ux_annotations","arguments":{"analysis_background":"#aabbcc","annotations":[{"type":"rect","points":[10,10,30,30]}],"dry_run":True}}})
+inherited_patch = recv()
+assert "result" in inherited_patch, inherited_patch
+inherited_info = json.loads(next(c["text"] for c in inherited_patch["result"]["content"] if c.get("type")=="text"))
+assert inherited_info["resolution"]["theme"] == 2 and inherited_info["resolution"]["drawing_style"] == "editorial", inherited_info
+send({"jsonrpc":"2.0","id":60,"method":"tools/call","params":{"name":"get_ux_annotations","arguments":{}}})
+stored = json.loads(recv()["result"]["content"][0]["text"])
+assert stored["theme"] == "dark" and stored["drawing_style"] == "editorial" and stored["analysis_background"] == "#AABBCC", stored
+send({"jsonrpc":"2.0","id":61,"method":"tools/call","params":{"name":"patch_ux_annotations","arguments":{"reset_render_config":True,"theme":"warm","annotations":[{"type":"rect","points":[10,10,30,30]}],"dry_run":True}}})
+assert "result" in recv()
+send({"jsonrpc":"2.0","id":62,"method":"tools/call","params":{"name":"get_ux_annotations","arguments":{}}})
+stored = json.loads(recv()["result"]["content"][0]["text"])
+assert stored["theme"] == "warm" and "drawing_style" not in stored and "analysis_background" not in stored and "reset_render_config" not in stored, stored
+
+# Invalid config fails before annotation/config state changes.
+before_invalid = json.dumps(stored, sort_keys=True)
+send({"jsonrpc":"2.0","id":63,"method":"tools/call","params":{"name":"patch_ux_annotations","arguments":{"theme":"ultraviolet","annotations":[{"type":"rect","points":[1,1,3,3]}]}}})
+assert "error" in recv()
+send({"jsonrpc":"2.0","id":64,"method":"tools/call","params":{"name":"get_ux_annotations","arguments":{}}})
+assert json.dumps(json.loads(recv()["result"]["content"][0]["text"]), sort_keys=True) == before_invalid
+
+# Two consecutive request-only themes resolve independently.
+request_light = dry_render({"theme":"light", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
+request_dark = dry_render({"theme":"dark", "annotations":[{"type":"rect","points":[10,10,30,30]}]})
+assert request_light["resolution"]["theme"] != request_dark["resolution"]["theme"]
+legacy_after_scoped = dry_render({"annotations":[{"type":"rect","points":[10,10,30,30]}]})
+assert "resolution" not in legacy_after_scoped, legacy_after_scoped
 
 # No-label MCP exports must honor z ordering and marker's forced-under layer.
 def render_pixel(annotations, x=32, y=32):
@@ -149,7 +220,6 @@ first_render = next(c["data"] for c in r["result"]["content"] if c.get("type")==
 send({"jsonrpc":"2.0","id":55,"method":"tools/call","params":{"name":"render_ux_annotations","arguments":{"annotations":[{"id":"a","type":"highlight_box","points":[10,10,50,50],"color":[1,0,0,1],"stroke_width":2,"text":"","font_size":18}]}}})
 r = recv()
 second_render = next(c["data"] for c in r["result"]["content"] if c.get("type")=="image")
-import hashlib
 assert hashlib.sha256(base64.b64decode(first_render)).digest() == hashlib.sha256(base64.b64decode(second_render)).digest()
 
 # get

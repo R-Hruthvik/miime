@@ -67,7 +67,7 @@ MCP_LDFLAGS = $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0 cairo pango pang
 miime-mcp: src/mcp_main.c src/mcp.c src/grounding.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c src/style.c
 	$(CC) $(MCP_CFLAGS) src/mcp_main.c src/mcp.c src/grounding.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c src/style.c -o miime-mcp $(MCP_LDFLAGS)
 
-test_mcp: miime-mcp
+test_mcp: miime-mcp test_headless $(BIN)
 	python3 tests/test_mcp.py
 
 PREFIX ?= /usr/local

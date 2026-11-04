@@ -17,6 +17,7 @@ static char *g_state_annotations = NULL; /* serialized JSON */
 static char *g_state_registry = NULL;
 static char *g_state_buffer_b = NULL;
 static char *g_tool_error = NULL;
+static MiimeStyleConfig g_state_render_config;
 
 static void setstr(char **p, const char *v) {
     g_free(*p);
@@ -235,7 +236,8 @@ static char *handle_prepare(const char *args) {
     setstr(&g_state_image, clean);
     setstr(&g_state_buffer_b, bpath);
     setstr(&g_state_registry, regjson);
-    setstr(&g_state_annotations, g_strdup("{\"annotations\":[]}"));
+    setstr(&g_state_annotations, "{\"annotations\":[]}");
+    memset(&g_state_render_config, 0, sizeof(g_state_render_config));
 
     char *b64 = file_to_base64(bpath);
 
@@ -284,12 +286,46 @@ static MiimeAestheticStyle extract_aesthetic(const char *args) {
     return style;
 }
 
-static char *handle_render_internal(const char *args, const char *annotations_override) {
+static gboolean parse_requested_config(const char *args, MiimeStyleConfig *out) {
+    GError *err = NULL;
+    MiimeStyleConfig parsed = {0};
+    if (!miime_schema_deserialize_render_config(args ? args : "{}", &parsed, &err)) {
+        g_tool_error = g_strdup(err ? err->message : "invalid render config");
+        if (err) g_error_free(err);
+        return FALSE;
+    }
+    *out = parsed;
+    return TRUE;
+}
+
+static void merge_render_config(MiimeStyleConfig *base, const MiimeStyleConfig *patch) {
+    if (patch->has_reset_render_config && patch->reset_render_config)
+        memset(base, 0, sizeof(*base));
+    if (patch->has_drawing_style) { base->drawing_style=patch->drawing_style; base->has_drawing_style=TRUE; }
+    if (patch->has_theme) { base->theme=patch->theme; base->has_theme=TRUE; }
+    if (patch->has_analysis_background) { base->analysis_background_rgba=patch->analysis_background_rgba; base->has_analysis_background=TRUE; }
+    if (patch->has_aesthetic_style) { base->aesthetic_style=patch->aesthetic_style; base->has_aesthetic_style=TRUE; }
+    base->has_reset_render_config=FALSE;
+    base->reset_render_config=FALSE;
+    /* The legacy aesthetic alias chooses a 2.1 style until a new style or
+     * theme opts in; the resolver maps it only once that opt-in is active. */
+}
+
+static MiimeAestheticStyle config_aesthetic(const MiimeStyleConfig *config, const char *args) {
+    if (config && config->has_aesthetic_style) return config->aesthetic_style;
+    return extract_aesthetic(args);
+}
+
+static char *handle_render_internal(const char *args, const char *annotations_override,
+                                    const MiimeStyleConfig *provided_config) {
     /* deserialize annotations from args (extra keys ignored) */
     GError *err = NULL;
     const char *annotation_source=annotations_override;
     if (!annotation_source && args && !strstr(args,"\"annotations\"") && g_state_annotations)
         annotation_source=g_state_annotations;
+    MiimeStyleConfig local_config = {0};
+    if (provided_config) local_config=*provided_config;
+    else if (!parse_requested_config(args, &local_config)) return NULL;
     MiimeAnnotationStack *stack = miime_schema_deserialize_ex(annotation_source ? annotation_source : args, &err, g_state_registry);
     if (!stack) {
         if (err && strstr(err->message,"unknown som_id")) {
@@ -301,8 +337,7 @@ static char *handle_render_internal(const char *args, const char *annotations_ov
     }
     if (err) { g_error_free(err); err=NULL; }
 
-    MiimeAestheticStyle aesthetic=extract_aesthetic(args);
-    miime_render_set_aesthetic(aesthetic);
+    MiimeAestheticStyle aesthetic=config_aesthetic(&local_config,args);
 
     /* serialize current state */
     char *ser = miime_schema_serialize(stack);
@@ -313,10 +348,14 @@ static char *handle_render_internal(const char *args, const char *annotations_ov
     int w=0,h=0;
     int layout_mode=extract_layout_mode(args);
     gboolean dry_run=extract_bool(args,"dry_run",FALSE);
+    gboolean style_opted_in=local_config.has_drawing_style || local_config.has_theme;
+    MiimeRenderOptions options={.requested=local_config,.resolution=NULL};
     if (g_state_image) {
         MiimeImage *img = miime_image_load(g_state_image);
         if (img) {
-            char *placement_json=miime_render_annotations_with_dry_run(img,stack,layout_mode,aesthetic,dry_run,&surf,&w,&h);
+            char *placement_json=style_opted_in
+                ? miime_render_annotations_with_options(img,stack,layout_mode,aesthetic,&options,dry_run,&surf,&w,&h)
+                : miime_render_annotations_with_dry_run(img,stack,layout_mode,aesthetic,dry_run,&surf,&w,&h);
             if (dry_run) {
                 GString *dry=g_string_new("{\"content\":[{\"type\":\"text\",\"text\":");
                 const char *placement_text=placement_json ? placement_json : "{\"placements\":[]}";
@@ -373,30 +412,48 @@ static char *handle_render_internal(const char *args, const char *annotations_ov
     return out;
 }
 
-static char *handle_render(const char *args) { return handle_render_internal(args,NULL); }
+static char *handle_render(const char *args) { return handle_render_internal(args,NULL,NULL); }
 
 static char *handle_patch(const char *args) {
+    MiimeStyleConfig patch_config={0};
+    if (!parse_requested_config(args,&patch_config)) return NULL;
+    MiimeStyleConfig next_config=g_state_render_config;
+    merge_render_config(&next_config,&patch_config);
+    MiimeAnnotationStack *validated_stack=NULL;
+    GError *validation_error=NULL;
     /* If annotations provided, replace; else apply operations crudely by reusing current */
     if (strstr(args, "\"annotations\"")) {
         /* replace state annotations with args annotations */
-        GError *err = NULL;
-        MiimeAnnotationStack *stack = miime_schema_deserialize_ex(args, &err, g_state_registry);
-        if (stack) {
-            char *ser = miime_schema_serialize(stack);
-            setstr(&g_state_annotations, ser);
-            g_free(ser);
-            miime_annot_stack_free(stack);
-        } else {
-            if (err && strstr(err->message,"unknown som_id")) {
+        validated_stack = miime_schema_deserialize_ex(args, &validation_error, g_state_registry);
+        if (!validated_stack) {
+            if (validation_error && strstr(validation_error->message,"unknown som_id")) {
                 int som_id = extract_int(args, "som_id", -1);
                 g_tool_error = g_strdup_printf("unknown som_id %d (or missing bounds)", som_id);
-            } else g_tool_error = g_strdup(err ? err->message : "invalid annotations");
-            if (err) g_error_free(err);
+            } else g_tool_error = g_strdup(validation_error ? validation_error->message : "invalid annotations");
+            if (validation_error) g_error_free(validation_error);
             return NULL;
         }
     }
+    if (validation_error) g_error_free(validation_error);
+    if (validated_stack) {
+        char *ser=miime_schema_serialize_with_config(validated_stack,&next_config);
+        setstr(&g_state_annotations,ser);
+        g_free(ser);
+        miime_annot_stack_free(validated_stack);
+    }
+    g_state_render_config=next_config;
     /* re-render */
-    return handle_render_internal(args,g_state_annotations ? g_state_annotations : args);
+    char *rendered=handle_render_internal(args,g_state_annotations ? g_state_annotations : args,&g_state_render_config);
+    GError *state_error=NULL;
+    MiimeAnnotationStack *state_stack=miime_schema_deserialize(g_state_annotations ? g_state_annotations : "{\"annotations\":[]}",&state_error);
+    if (state_stack) {
+        char *ser=miime_schema_serialize_with_config(state_stack,&g_state_render_config);
+        setstr(&g_state_annotations,ser);
+        g_free(ser);
+        miime_annot_stack_free(state_stack);
+    }
+    if (state_error) g_error_free(state_error);
+    return rendered;
 }
 
 static char *handle_get(const char *args) {
@@ -433,7 +490,7 @@ static char *handle_verify(const char *args) {
 }
 
 static const char *tools_list_json =
-"{\"tools\":[{\"name\":\"prepare_ux_canvas\",\"description\":\"Ingest an image or URL, optionally draw visual aids, and build a Set-of-Mark grounding registry.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"source_type\":{\"type\":\"string\",\"enum\":[\"image_path\",\"url\"]},\"source\":{\"type\":\"string\"},\"visual_aids\":{\"type\":\"boolean\"},\"width\":{\"type\":\"integer\",\"minimum\":0},\"height\":{\"type\":\"integer\",\"minimum\":0},\"viewport_width\":{\"type\":\"integer\",\"minimum\":0},\"viewport_height\":{\"type\":\"integer\",\"minimum\":0},\"viewport\":{\"type\":\"object\",\"properties\":{\"width\":{\"type\":\"integer\",\"minimum\":0},\"height\":{\"type\":\"integer\",\"minimum\":0}}}},\"required\":[\"source\"]},\"annotations\":{\"readOnlyHint\":false}},{\"name\":\"render_ux_annotations\",\"description\":\"Render up to 15 annotations using the annotation vocabulary, layout, and aesthetic options. dry_run returns label placements without a PNG.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"layout_mode\":{\"type\":\"string\",\"enum\":[\"auto\",\"margin_rail\",\"in_canvas_floating\"]},\"aesthetic_style\":{\"type\":\"string\",\"enum\":[\"rough_sketch\",\"clean_technical\"]},\"dry_run\":{\"type\":\"boolean\"},\"annotations\":{\"type\":\"array\",\"maxItems\":15,\"items\":{\"type\":\"object\",\"required\":[\"type\"],\"properties\":{\"id\":{\"type\":\"string\"},\"type\":{\"type\":\"string\",\"enum\":[\"highlight_box\",\"spacing_ruler\",\"alignment_redline\",\"callout\",\"pin\",\"freehand\",\"circle\",\"bracket\",\"underline\",\"strike\",\"pen\",\"line\",\"rect\",\"ellipse\",\"arrow\",\"text\",\"blur\",\"crop\"]},\"source\":{\"type\":\"string\"},\"som_id\":{\"type\":\"integer\"},\"points\":{\"oneOf\":[{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2},{\"type\":\"array\",\"items\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2},\"minItems\":1}]},\"color\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":4,\"maxItems\":4},\"ink\":{\"type\":\"string\",\"enum\":[\"thin\",\"regular\",\"bold\",\"marker\"]},\"stroke_width\":{\"oneOf\":[{\"type\":\"number\",\"exclusiveMinimum\":0},{\"type\":\"array\",\"items\":{\"type\":\"number\",\"exclusiveMinimum\":0},\"minItems\":2,\"maxItems\":2}]},\"dash\":{\"type\":\"string\",\"enum\":[\"solid\",\"dashed\",\"dotted\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"none\",\"hachure\",\"solid\"]},\"fill_color\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":4,\"maxItems\":4},\"radius\":{\"type\":\"number\",\"minimum\":0},\"arrow\":{\"type\":\"string\",\"enum\":[\"none\",\"end\",\"both\",\"start\"]},\"z\":{\"type\":\"string\",\"enum\":[\"under\",\"normal\",\"over\"]},\"text\":{\"type\":\"string\"},\"font_size\":{\"type\":\"number\",\"minimum\":0},\"label\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"},\"anchor\":{\"oneOf\":[{\"type\":\"string\",\"enum\":[\"auto\",\"right\",\"bottom\",\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\"]},{\"type\":\"integer\",\"minimum\":0,\"maximum\":7}]},\"leader\":{\"type\":\"string\",\"enum\":[\"curved\",\"elbow\",\"none\"]}},\"required\":[\"text\"]}}}}}},\"annotations\":{\"readOnlyHint\":false}},{\"name\":\"patch_ux_annotations\",\"description\":\"Replace the current annotation set and render it; accepts the same annotation, layout, and dry-run options as render_ux_annotations.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"layout_mode\":{\"type\":\"string\",\"enum\":[\"auto\",\"margin_rail\",\"in_canvas_floating\"]},\"aesthetic_style\":{\"type\":\"string\",\"enum\":[\"rough_sketch\",\"clean_technical\"]},\"dry_run\":{\"type\":\"boolean\"},\"annotations\":{\"type\":\"array\",\"maxItems\":15,\"items\":{\"type\":\"object\",\"required\":[\"type\"],\"properties\":{\"id\":{\"type\":\"string\"},\"type\":{\"type\":\"string\",\"enum\":[\"highlight_box\",\"spacing_ruler\",\"alignment_redline\",\"callout\",\"pin\",\"freehand\",\"circle\",\"bracket\",\"underline\",\"strike\",\"pen\",\"line\",\"rect\",\"ellipse\",\"arrow\",\"text\",\"blur\",\"crop\"]},\"source\":{\"type\":\"string\"},\"som_id\":{\"type\":\"integer\"},\"points\":{\"oneOf\":[{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2},{\"type\":\"array\",\"items\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2},\"minItems\":1}]},\"color\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":4,\"maxItems\":4},\"ink\":{\"type\":\"string\",\"enum\":[\"thin\",\"regular\",\"bold\",\"marker\"]},\"stroke_width\":{\"oneOf\":[{\"type\":\"number\",\"exclusiveMinimum\":0},{\"type\":\"array\",\"items\":{\"type\":\"number\",\"exclusiveMinimum\":0},\"minItems\":2,\"maxItems\":2}]},\"dash\":{\"type\":\"string\",\"enum\":[\"solid\",\"dashed\",\"dotted\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"none\",\"hachure\",\"solid\"]},\"fill_color\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":4,\"maxItems\":4},\"radius\":{\"type\":\"number\",\"minimum\":0},\"arrow\":{\"type\":\"string\",\"enum\":[\"none\",\"end\",\"both\",\"start\"]},\"z\":{\"type\":\"string\",\"enum\":[\"under\",\"normal\",\"over\"]},\"text\":{\"type\":\"string\"},\"font_size\":{\"type\":\"number\",\"minimum\":0},\"label\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"},\"anchor\":{\"oneOf\":[{\"type\":\"string\",\"enum\":[\"auto\",\"right\",\"bottom\",\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\"]},{\"type\":\"integer\",\"minimum\":0,\"maximum\":7}]},\"leader\":{\"type\":\"string\",\"enum\":[\"curved\",\"elbow\",\"none\"]}},\"required\":[\"text\"]}}}}}},\"annotations\":{\"readOnlyHint\":false}},{\"name\":\"get_ux_annotations\",\"description\":\"Read the current annotation set.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"verify_ux_render\",\"description\":\"Compare the prepared source with the current annotation render.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true}}]}";
+"{\"tools\":[{\"name\":\"prepare_ux_canvas\",\"description\":\"Ingest an image or URL, optionally draw visual aids, and build a Set-of-Mark grounding registry.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"source_type\":{\"type\":\"string\",\"enum\":[\"image_path\",\"url\"]},\"source\":{\"type\":\"string\"},\"visual_aids\":{\"type\":\"boolean\"},\"width\":{\"type\":\"integer\",\"minimum\":0},\"height\":{\"type\":\"integer\",\"minimum\":0},\"viewport_width\":{\"type\":\"integer\",\"minimum\":0},\"viewport_height\":{\"type\":\"integer\",\"minimum\":0},\"viewport\":{\"type\":\"object\",\"properties\":{\"width\":{\"type\":\"integer\",\"minimum\":0},\"height\":{\"type\":\"integer\",\"minimum\":0}}}},\"required\":[\"source\"]},\"annotations\":{\"readOnlyHint\":false}},{\"name\":\"render_ux_annotations\",\"description\":\"Render up to 15 annotations using the annotation vocabulary, layout, and aesthetic options. dry_run returns label placements without a PNG.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"layout_mode\":{\"type\":\"string\",\"enum\":[\"auto\",\"margin_rail\",\"in_canvas_floating\"]},\"aesthetic_style\":{\"type\":\"string\",\"enum\":[\"rough_sketch\",\"clean_technical\"]},\"drawing_style\":{\"type\":\"string\",\"enum\":[\"technical\",\"sketch\",\"editorial\",\"minimal\"]},\"theme\":{\"type\":\"string\",\"enum\":[\"auto\",\"light\",\"dark\",\"warm\",\"neutral\"]},\"analysis_background\":{\"type\":\"string\",\"pattern\":\"^#[0-9A-Fa-f]{6}$\"},\"reset_render_config\":{\"type\":\"boolean\"},\"dry_run\":{\"type\":\"boolean\"},\"annotations\":{\"type\":\"array\",\"maxItems\":15,\"items\":{\"type\":\"object\",\"required\":[\"type\"],\"properties\":{\"id\":{\"type\":\"string\"},\"type\":{\"type\":\"string\",\"enum\":[\"highlight_box\",\"spacing_ruler\",\"alignment_redline\",\"callout\",\"pin\",\"freehand\",\"circle\",\"bracket\",\"underline\",\"strike\",\"pen\",\"line\",\"rect\",\"ellipse\",\"arrow\",\"text\",\"blur\",\"crop\"]},\"source\":{\"type\":\"string\"},\"som_id\":{\"type\":\"integer\"},\"points\":{\"oneOf\":[{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2},{\"type\":\"array\",\"items\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2},\"minItems\":1}]},\"color\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":4,\"maxItems\":4},\"ink\":{\"type\":\"string\",\"enum\":[\"thin\",\"regular\",\"bold\",\"marker\"]},\"stroke_width\":{\"oneOf\":[{\"type\":\"number\",\"exclusiveMinimum\":0},{\"type\":\"array\",\"items\":{\"type\":\"number\",\"exclusiveMinimum\":0},\"minItems\":2,\"maxItems\":2}]},\"dash\":{\"type\":\"string\",\"enum\":[\"solid\",\"dashed\",\"dotted\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"none\",\"hachure\",\"solid\"]},\"fill_color\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":4,\"maxItems\":4},\"radius\":{\"type\":\"number\",\"minimum\":0},\"arrow\":{\"type\":\"string\",\"enum\":[\"none\",\"end\",\"both\",\"start\"]},\"z\":{\"type\":\"string\",\"enum\":[\"under\",\"normal\",\"over\"]},\"text\":{\"type\":\"string\"},\"font_size\":{\"type\":\"number\",\"minimum\":0},\"label\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"},\"anchor\":{\"oneOf\":[{\"type\":\"string\",\"enum\":[\"auto\",\"right\",\"bottom\",\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\"]},{\"type\":\"integer\",\"minimum\":0,\"maximum\":7}]},\"leader\":{\"type\":\"string\",\"enum\":[\"curved\",\"elbow\",\"none\"]}},\"required\":[\"text\"]}}}}}},\"annotations\":{\"readOnlyHint\":false}},{\"name\":\"patch_ux_annotations\",\"description\":\"Replace the current annotation set and render it; accepts the same annotation, layout, and dry-run options as render_ux_annotations.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"layout_mode\":{\"type\":\"string\",\"enum\":[\"auto\",\"margin_rail\",\"in_canvas_floating\"]},\"aesthetic_style\":{\"type\":\"string\",\"enum\":[\"rough_sketch\",\"clean_technical\"]},\"drawing_style\":{\"type\":\"string\",\"enum\":[\"technical\",\"sketch\",\"editorial\",\"minimal\"]},\"theme\":{\"type\":\"string\",\"enum\":[\"auto\",\"light\",\"dark\",\"warm\",\"neutral\"]},\"analysis_background\":{\"type\":\"string\",\"pattern\":\"^#[0-9A-Fa-f]{6}$\"},\"reset_render_config\":{\"type\":\"boolean\"},\"dry_run\":{\"type\":\"boolean\"},\"annotations\":{\"type\":\"array\",\"maxItems\":15,\"items\":{\"type\":\"object\",\"required\":[\"type\"],\"properties\":{\"id\":{\"type\":\"string\"},\"type\":{\"type\":\"string\",\"enum\":[\"highlight_box\",\"spacing_ruler\",\"alignment_redline\",\"callout\",\"pin\",\"freehand\",\"circle\",\"bracket\",\"underline\",\"strike\",\"pen\",\"line\",\"rect\",\"ellipse\",\"arrow\",\"text\",\"blur\",\"crop\"]},\"source\":{\"type\":\"string\"},\"som_id\":{\"type\":\"integer\"},\"points\":{\"oneOf\":[{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2},{\"type\":\"array\",\"items\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2},\"minItems\":1}]},\"color\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":4,\"maxItems\":4},\"ink\":{\"type\":\"string\",\"enum\":[\"thin\",\"regular\",\"bold\",\"marker\"]},\"stroke_width\":{\"oneOf\":[{\"type\":\"number\",\"exclusiveMinimum\":0},{\"type\":\"array\",\"items\":{\"type\":\"number\",\"exclusiveMinimum\":0},\"minItems\":2,\"maxItems\":2}]},\"dash\":{\"type\":\"string\",\"enum\":[\"solid\",\"dashed\",\"dotted\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"none\",\"hachure\",\"solid\"]},\"fill_color\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":4,\"maxItems\":4},\"radius\":{\"type\":\"number\",\"minimum\":0},\"arrow\":{\"type\":\"string\",\"enum\":[\"none\",\"end\",\"both\",\"start\"]},\"z\":{\"type\":\"string\",\"enum\":[\"under\",\"normal\",\"over\"]},\"text\":{\"type\":\"string\"},\"font_size\":{\"type\":\"number\",\"minimum\":0},\"label\":{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"},\"anchor\":{\"oneOf\":[{\"type\":\"string\",\"enum\":[\"auto\",\"right\",\"bottom\",\"0\",\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\"]},{\"type\":\"integer\",\"minimum\":0,\"maximum\":7}]},\"leader\":{\"type\":\"string\",\"enum\":[\"curved\",\"elbow\",\"none\"]}},\"required\":[\"text\"]}}}}}},\"annotations\":{\"readOnlyHint\":false}},{\"name\":\"get_ux_annotations\",\"description\":\"Read the current annotation set.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true}},{\"name\":\"verify_ux_render\",\"description\":\"Compare the prepared source with the current annotation render.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true}}]}";
 
 int miime_mcp_run(void) {
     char *line = NULL;
