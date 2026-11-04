@@ -1,0 +1,36 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-11-03-miime-adaptive-themes.md
+Approved by user: proceed with same instructions, Luna implementers/reviewers, test/live verification, commit and push.
+Base: 0134e408eda5a3521bd407b8ad4c86ecbaf0728f on codex/miime-2.1-annotation-vocabulary. Existing in-place feature-branch preference retained.
+## Preflight
+|Tasks|Shared contract / finding|
+|---|---|
+|1|Self-consistent except cross-cutting rulings below; red/green acceptance tests specified.|
+|2|Self-consistent except cross-cutting rulings below; red/green acceptance tests specified.|
+|3|Self-consistent except cross-cutting rulings below; red/green acceptance tests specified.|
+|4|Self-consistent except cross-cutting rulings below; red/green acceptance tests specified.|
+|5|Self-consistent except cross-cutting rulings below; red/green acceptance tests specified.|
+|1,2|StyleConfig and annotation override flags feed resolver; preserve aliases and omitted widths.|
+|1,3|Requested-only serializer must not freeze automatic values.|
+|1,4|Config parser validates reset/aliases; state command and stored requests separated.|
+|1,5|Requested-only get JSON vs ephemeral diagnostics.|
+|2,3|Resolution must expose resolved per-annotation appearance so renderer need not repeat contrast math.|
+|2,4|New style sources linked into MCP/headless and all render consumers.|
+|2,5|Deterministic metadata/coverage ownership.|
+|3,4|Options-aware layout API carries crop, legacy aesthetic, labels and dry run.|
+|3,5|Draw and dryrun share resolver and placement stage.|
+|4,5|Inherited options/reset retain typed requested config; metadata sameinput consistent.|
+Ruling: Extend structs with ancillary fields needed to retain legacy aesthetic alias provenance, reset command presence, and resolved per-annotation draw tokens; prescribed signatures remain stable. These are necessary to implement existing spec behaviors, not additional features.
+Ruling: Requested-only themed serialization must omit absent stroke_width as well as absent color/font_size; otherwise the old parser default width becomes an explicit override after reload and styles stop working. Legacy serialization remains byte-identical.
+Ruling: Existing explicit font_size:0 keeps legacy fallback size (24 rendered pixels), not an invisible zero-size label; absence chooses style font size. Presence must survive roundtrip.
+Ruling: Extend layout with an options-aware metrics adapter if needed for new absolute font sizes, retaining existing public legacy wrappers and hashes.
+Ruling: No-options desktop paths remain legacy; saved JSON with explicit new options must render through the same options-aware path wherever that JSON is consumed.
+Task 1: complete (0134e40..8ba73c0, review clean; full make test passes).
+Task 2 BASE: 8ba73c0.
+
+Task 2: complete locally; resolver, palette accessors, source linkage, tests, and report added. `make test_style`, full `make test`, `make all`, and `git diff --check` passed (full suite preceded final test-only additions; focused style suite reran afterward). Awaiting commit hash.
+
+Task 3: complete locally. Added the exact options-aware export and layout/dry-run APIs, a metrics-aware layout adapter, request-scoped resolved annotation copies, local neutral dual halos, style-specific geometry and absolute Pango text sizes, opaque/default and explicit label surfaces, crop/rail diagnostics, and render-dependent test linkage. Options-aware export routes labeled stacks through automatic layout. Existing no-options export/layout paths retain their previous results.
+
+Task 3 verification: `make test_render`, full `make test`, and `make -B all` pass. Compared raw Cairo pixel hashes for a labeled fixture against the pre-Task3 `HEAD` renderer: export `85eed7a48c2db46b65cf95ec9dc694f8828cdcd7c5b6730afd5837a06586866e`; layout `266fc1d39c2799982b51f5733378e0896e0b0ee4389545f388509438ae3d9c3c`; both match and are pinned in `test_render_legacy_hashes_without_options`.
+
+Task 3 integration rulings: `MiimeRenderOptions.resolution` is borrowed and reused when supplied; otherwise each options-aware request resolves once from the clean image and effective crop. Temporary annotation copies borrow `blur_data` and never transfer/free it. The options-aware layout path keeps label placement/metrics shared by drawing and dry-run, reports crop coordinates and the 300px rail offset, and draws white outer then black inner halos on the annotation's actual geometry. A NULL options pointer delegates to the original renderer.

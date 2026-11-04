@@ -28,12 +28,22 @@ typedef struct {
 
 /* measure_line returns pixel width of a single-line string. */
 typedef double (*MiimeMeasureLineFn)(const char *text, void *userdata);
+typedef void (*MiimeMeasureBlockFn)(const char *text, void *userdata,
+                                    double max_width, double *out_width, double *out_height);
 
 int  miime_layout_run(int img_w, int img_h,
                       MiimeLayoutItem *items, int n,
                       int layout_mode,   /* 0 auto, 1 margin_rail, 2 in_canvas */
                       int aesthetic,     /* 0 rough_sketch, 1 clean_technical */
                       MiimeMeasureLineFn measure_line, void *userdata,
+                      MiimeLayoutResult *out);
+
+/* New renderer adapter: the callback supplies actual wrapped block metrics.
+ * The legacy entry point above keeps its historical line-count metrics. */
+int  miime_layout_run_with_metrics(int img_w, int img_h,
+                      MiimeLayoutItem *items, int n,
+                      int layout_mode, int aesthetic,
+                      MiimeMeasureBlockFn measure_block, void *userdata,
                       MiimeLayoutResult *out);
 
 int  miime_layout_mode_select(int img_w, int img_h, int n, const MiimeLayoutItem *items);

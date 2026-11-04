@@ -113,12 +113,13 @@ static void port_point(double rx,double ry,double rw,double rh, int port, double
     if (len>0) { *nx/=len; *ny/=len; }
 }
 
-int miime_layout_run(int img_w, int img_h, MiimeLayoutItem *items, int n,
+static int layout_run_core(int img_w, int img_h, MiimeLayoutItem *items, int n,
                       int layout_mode, int aesthetic,
                       MiimeMeasureLineFn measure_line, void *userdata,
+                      MiimeMeasureBlockFn measure_block,
                       MiimeLayoutResult *out) {
     if (!items || !out || n<=0 || n>MIIME_LAYOUT_MAX_ITEMS) return -1;
-    if (!measure_line) return -1;
+    if (!measure_line && !measure_block) return -1;
 
     double *lw = calloc(n, sizeof(double));
     double *lh = calloc(n, sizeof(double));
@@ -128,7 +129,8 @@ int miime_layout_run(int img_w, int img_h, MiimeLayoutItem *items, int n,
     if (mode == 0) mode = miime_layout_mode_select(img_w, img_h, n, items);
 
     for (int i=0;i<n;i++) {
-        measure_label(items[i].text, measure_line, userdata, 240.0, &lw[i], &lh[i]);
+        if (measure_block) measure_block(items[i].text, userdata, 240.0, &lw[i], &lh[i]);
+        else measure_label(items[i].text, measure_line, userdata, 240.0, &lw[i], &lh[i]);
     }
 
     int canvas_w = (mode==1) ? img_w + 600 : img_w;
@@ -399,4 +401,20 @@ int miime_layout_run(int img_w, int img_h, MiimeLayoutItem *items, int n,
 
     free(lw); free(lh); free(ix); free(iy); free(cx); free(cy);
     return 0;
+}
+
+int miime_layout_run(int img_w, int img_h, MiimeLayoutItem *items, int n,
+                      int layout_mode, int aesthetic,
+                      MiimeMeasureLineFn measure_line, void *userdata,
+                      MiimeLayoutResult *out) {
+    return layout_run_core(img_w,img_h,items,n,layout_mode,aesthetic,
+                           measure_line,userdata,NULL,out);
+}
+
+int miime_layout_run_with_metrics(int img_w, int img_h, MiimeLayoutItem *items, int n,
+                      int layout_mode, int aesthetic,
+                      MiimeMeasureBlockFn measure_block, void *userdata,
+                      MiimeLayoutResult *out) {
+    return layout_run_core(img_w,img_h,items,n,layout_mode,aesthetic,
+                           NULL,userdata,measure_block,out);
 }

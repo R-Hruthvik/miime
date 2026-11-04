@@ -5,6 +5,12 @@
 #include "image.h"
 #include "annotate.h"
 #include "sketch.h"
+#include "style.h"
+
+typedef struct {
+    MiimeStyleConfig requested;
+    const MiimeStyleResolution *resolution; /* borrowed, optional */
+} MiimeRenderOptions;
 
 /*
  * Render the base image and annotations to a Cairo context with viewport transforms.
@@ -36,6 +42,11 @@ cairo_surface_t *miime_render_export(MiimeImage *img,
                                      const MiimeAnnotationStack *stack,
                                      int *out_w, int *out_h);
 
+cairo_surface_t *miime_render_export_with_options(MiimeImage *img,
+                                     const MiimeAnnotationStack *stack,
+                                     const MiimeRenderOptions *options,
+                                     int *out_w, int *out_h);
+
 /* Layout-aware render/export. In dry_run mode no surface is produced and the
  * returned JSON describes placements. In render mode JSON is NULL and the
  * rendered surface is returned through out_surface. */
@@ -43,6 +54,15 @@ char *miime_render_annotations_with_dry_run(MiimeImage *img,
                                             const MiimeAnnotationStack *stack,
                                             int layout_mode,
                                             MiimeAestheticStyle aesthetic,
+                                            gboolean dry_run,
+                                            cairo_surface_t **out_surface,
+                                            int *out_w, int *out_h);
+
+char *miime_render_annotations_with_options(MiimeImage *img,
+                                            const MiimeAnnotationStack *stack,
+                                            int layout_mode,
+                                            MiimeAestheticStyle legacy_aesthetic,
+                                            const MiimeRenderOptions *options,
                                             gboolean dry_run,
                                             cairo_surface_t **out_surface,
                                             int *out_w, int *out_h);

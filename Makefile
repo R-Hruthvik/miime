@@ -21,8 +21,8 @@ clean:
 	rm -f $(OBJ) $(BIN) miime-mcp
 	rm -f tests/test_image tests/test_annotate tests/test_render tests/test_tools tests/test_schema tests/test_headless tests/test_sketch tests/test_grounding tests/test_layout tests/test_bidir tests/test_mcp tests/test_style
 
-test_sketch: tests/test_sketch.c src/sketch.c src/freehand.c src/render.c src/layout.c src/annotate.c src/image.c
-	$(CC) $(TEST_CFLAGS) tests/test_sketch.c src/sketch.c src/freehand.c src/render.c src/layout.c src/annotate.c src/image.c -o tests/test_sketch $(TEST_LDFLAGS)
+test_sketch: tests/test_sketch.c src/sketch.c src/freehand.c src/render.c src/layout.c src/annotate.c src/image.c src/style.c
+	$(CC) $(TEST_CFLAGS) tests/test_sketch.c src/sketch.c src/freehand.c src/render.c src/layout.c src/annotate.c src/image.c src/style.c -o tests/test_sketch $(TEST_LDFLAGS)
 	./tests/test_sketch
 
 test_image: tests/test_image.c src/image.c
@@ -33,8 +33,8 @@ test_annotate: tests/test_annotate.c src/annotate.c
 	$(CC) $(TEST_CFLAGS) tests/test_annotate.c src/annotate.c -o tests/test_annotate $(TEST_LDFLAGS)
 	./tests/test_annotate
 
-test_render: tests/test_render.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c
-	$(CC) $(TEST_CFLAGS) tests/test_render.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c -o tests/test_render $(TEST_LDFLAGS)
+test_render: tests/test_render.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c src/style.c
+	$(CC) $(TEST_CFLAGS) tests/test_render.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c src/style.c -o tests/test_render $(TEST_LDFLAGS)
 	./tests/test_render
 
 test_tools: tests/test_tools.c src/tools.c src/annotate.c src/image.c
@@ -53,8 +53,8 @@ test_layout: tests/test_layout.c src/layout.c
 	$(CC) -std=c99 -Wall -Wextra -Werror tests/test_layout.c src/layout.c -o tests/test_layout -lm
 	./tests/test_layout
 
-test_headless: tests/test_headless.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c
-	$(CC) $(TEST_CFLAGS) tests/test_headless.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c -o tests/test_headless $(TEST_LDFLAGS)
+test_headless: tests/test_headless.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c src/style.c
+	$(CC) $(TEST_CFLAGS) tests/test_headless.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c src/style.c -o tests/test_headless $(TEST_LDFLAGS)
 	./tests/test_headless
 
 test_bidir: tests/test_bidir.c src/schema.c src/annotate.c

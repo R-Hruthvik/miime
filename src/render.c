@@ -11,6 +11,11 @@
 
 static MiimeAestheticStyle g_aesthetic = MIIME_AESTHETIC_ROUGH_SKETCH;
 
+static char *render_annotations_core(MiimeImage *img, const MiimeAnnotationStack *stack,
+                                    int layout_mode, MiimeAestheticStyle aesthetic,
+                                    const MiimeRenderOptions *options, gboolean dry_run,
+                                    cairo_surface_t **out_surface, int *out_w, int *out_h);
+
 void miime_render_set_aesthetic(MiimeAestheticStyle style) { g_aesthetic = style; }
 MiimeAestheticStyle miime_render_get_aesthetic(void) { return g_aesthetic; }
 
@@ -101,7 +106,7 @@ static void callout_path(cairo_t *cr, MiimeSketchRng *rng,
 static void render_callout(cairo_t *cr, const MiimeAnnotation *a,
                            MiimeSketchRng *rng, double x, double y,
                            double w, double h, int rough, double width,
-                           double alpha) {
+                           double alpha, gboolean legacy_halo) {
     if (w <= 0.0 || h <= 0.0) return;
     double radius = a->has_radius ? a->radius : 12.0;
     int fill = a->has_fill ? a->fill : 2;
@@ -119,7 +124,7 @@ static void render_callout(cairo_t *cr, const MiimeAnnotation *a,
         }
         cairo_restore(cr);
     }
-    if (rough) {
+    if (rough && legacy_halo) {
         cairo_save(cr);
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.85);
         cairo_set_line_width(cr, 5.5);
@@ -200,9 +205,40 @@ static void render_arrow_geometry(cairo_t *cr, MiimeSketchRng *rng,
     }
 }
 
-static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolean is_preview,
-                                  int pin_number) {
+static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *input, gboolean is_preview,
+                                  int pin_number, MiimeAestheticStyle aesthetic,
+                                  const MiimeAnnotationStyleResult *appearance, int halo_layer) {
+    MiimeAnnotation styled;
+    const MiimeAnnotation *a = input;
     if (!a) return;
+
+    if (appearance) {
+        styled = *a;
+        styled.color_r=appearance->ink_rgba[0]; styled.color_g=appearance->ink_rgba[1];
+        styled.color_b=appearance->ink_rgba[2]; styled.color_a=appearance->ink_rgba[3];
+        styled.stroke_width=appearance->stroke_width; styled.has_stroke_width=TRUE;
+        styled.stroke_width_end=appearance->stroke_width_end;
+        styled.font_size=appearance->font_size; styled.has_font_size=TRUE;
+        styled.radius=appearance->radius; styled.has_radius=TRUE;
+        if (!styled.has_fill_color) {
+            styled.has_fill_color=TRUE;
+            styled.fill_r=appearance->fill_rgba[0]; styled.fill_g=appearance->fill_rgba[1];
+            styled.fill_b=appearance->fill_rgba[2]; styled.fill_a=appearance->fill_rgba[3];
+        }
+        if (appearance->has_fill) { styled.fill=2; styled.has_fill=TRUE; }
+        if (appearance->has_label_surface)
+            memcpy(styled.label_surface_rgba, appearance->label_surface_rgba, sizeof(styled.label_surface_rgba));
+        if (halo_layer >= 0) {
+            /* Paint the white outer stroke first, then the black inner stroke. */
+            static const double neutral[2][4]={{1.0,1.0,1.0,1.0},{0.0,0.0,0.0,1.0}};
+            styled.color_r=neutral[halo_layer][0]; styled.color_g=neutral[halo_layer][1];
+            styled.color_b=neutral[halo_layer][2]; styled.color_a=neutral[halo_layer][3];
+            styled.stroke_width=appearance->stroke_width + appearance->halo_width * (halo_layer == 0 ? 2.0 : 1.0);
+            styled.stroke_width_end=styled.stroke_width;
+            styled.fill=0; styled.has_fill=FALSE;
+        }
+        a = &styled;
+    }
 
     gboolean has_ink = a->has_ink && a->ink >= MIIME_INK_THIN && a->ink <= MIIME_INK_MARKER;
     gboolean marker = has_ink && a->ink == MIIME_INK_MARKER;
@@ -210,8 +246,9 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
     double width = a->stroke_width > 0 ? a->stroke_width : 2.5;
     if (has_ink && !(a->has_stroke_width || a->has_stroke_width_pair)) width = ink_widths[a->ink];
     if (a->has_stroke_width || a->has_stroke_width_pair) width = a->stroke_width;
-    double alpha = marker ? a->color_a * 0.35 : a->color_a;
-    int rough = (g_aesthetic == MIIME_AESTHETIC_ROUGH_SKETCH) && !marker;
+    double alpha = halo_layer >= 0 ? 1.0 : (marker ? a->color_a * 0.35 : a->color_a);
+    if (halo_layer >= 0 && appearance) width = a->stroke_width;
+    int rough = (aesthetic == MIIME_AESTHETIC_ROUGH_SKETCH) && !marker;
 
     MiimeSketchRng rng;
     char idbuf[64];
@@ -256,7 +293,7 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
             if (a->point_count < 4) break;
             if (a->type == MIIME_ANNOT_UNDERLINE || a->type == MIIME_ANNOT_STRIKE)
                 cairo_set_line_cap(cr, CAIRO_LINE_CAP_SQUARE);
-            if (rough && a->type != MIIME_ANNOT_BRACKET) {
+            if (rough && !appearance && a->type != MIIME_ANNOT_BRACKET) {
                 /* halo */
                 cairo_save(cr);
                 cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
@@ -319,7 +356,7 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
             double h = fabs(a->points[opposite + 1] - a->points[1]);
             double radius = (a->has_radius && a->radius > 0.0) ? a->radius : 0.0;
             render_rect_fill(cr, a, &rng, x, y, w, h, radius, rough);
-            if (rough) {
+            if (rough && !appearance) {
                 cairo_save(cr);
                 cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
                 cairo_set_line_width(cr, 5.5);
@@ -346,7 +383,7 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
             double y = fmin(a->points[1], a->points[opposite + 1]);
             double w = fabs(a->points[opposite] - a->points[0]);
             double h = fabs(a->points[opposite + 1] - a->points[1]);
-            render_callout(cr, a, &rng, x, y, w, h, rough, width, alpha);
+            render_callout(cr, a, &rng, x, y, w, h, rough, width, alpha, appearance==NULL);
             break;
         }
 
@@ -371,7 +408,7 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
                     }
                     cairo_restore(cr);
                 }
-                if (rough) {
+                if (rough && !appearance) {
                     cairo_save(cr);
                     cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
                     cairo_set_line_width(cr, 5.5);
@@ -410,7 +447,7 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
             if (a->type == MIIME_ANNOT_CIRCLE) rx = ry = fmax(rx, ry);
             if (rx < 0.5 || ry < 0.5) break;
             render_ellipse_fill(cr, a, &rng, cx, cy, rx, ry, rough);
-            if (rough) {
+            if (rough && !appearance) {
                 cairo_save(cr);
                 cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
                 cairo_set_line_width(cr, 5.5);
@@ -434,7 +471,7 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
             double x2 = a->points[2], y2 = a->points[3];
             gboolean legacy_arrow = !a->has_arrow && !a->has_dash &&
                                      !(a->has_stroke_width_pair && a->stroke_width_end > 0);
-            if (rough && legacy_arrow) {
+            if (rough && !appearance && legacy_arrow) {
                 cairo_save(cr);
                 cairo_set_source_rgba(cr, 1.0,1.0,1.0,0.85);
                 cairo_set_line_width(cr, 5.5);
@@ -443,7 +480,7 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
                 cairo_restore(cr);
                 cairo_set_source_rgba(cr, a->color_r, a->color_g, a->color_b, alpha);
                 cairo_set_line_width(cr, width);
-            } else if (rough) {
+            } else if (rough && !appearance) {
                 int heads=a->has_arrow?a->arrow:2;
                 int dash=a->has_dash?a->dash:0;
                 gboolean taper=a->has_stroke_width_pair && a->stroke_width_end>0;
@@ -470,9 +507,16 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *a, gboolea
         case MIIME_ANNOT_TEXT: {
             double size = (a->font_size > 0.0) ? a->font_size : 18.0;
             PangoLayout *layout = pango_cairo_create_layout(cr);
-            char font_desc_str[64];
-            snprintf(font_desc_str, sizeof(font_desc_str), "Sans %.0f", size);
-            PangoFontDescription *font = pango_font_description_from_string(font_desc_str);
+            PangoFontDescription *font;
+            if (appearance) {
+                font=pango_font_description_new();
+                pango_font_description_set_family(font,"Sans");
+                pango_font_description_set_absolute_size(font,size*PANGO_SCALE);
+            } else {
+                char font_desc_str[64];
+                snprintf(font_desc_str,sizeof(font_desc_str),"Sans %.0f",size);
+                font=pango_font_description_from_string(font_desc_str);
+            }
             pango_layout_set_font_description(layout, font);
             pango_layout_set_text(layout, a->text, -1);
 
@@ -577,12 +621,12 @@ static void render_annotation_pass(cairo_t *cr, const MiimeAnnotationStack *stac
         int count = miime_annot_stack_count(stack);
         for (int i = 0; i < count; i++) {
             const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
-            if (annotation_z(a) == z) render_one_annotation(cr, a, FALSE, pin_number_before(stack, i));
+            if (annotation_z(a) == z) render_one_annotation(cr, a, FALSE, pin_number_before(stack, i), g_aesthetic, NULL, -1);
         }
     }
     if (preview && annotation_z(preview) == z)
         render_one_annotation(cr, preview, TRUE,
-                              pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0));
+                              pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0), g_aesthetic, NULL, -1);
 }
 
 void miime_render_annotations(cairo_t *cr,
@@ -603,10 +647,10 @@ void miime_render_annotations(cairo_t *cr,
             int count = miime_annot_stack_count(stack);
             for (int i = 0; i < count; i++)
                 render_one_annotation(cr, miime_annot_stack_get(stack, i), FALSE,
-                                      pin_number_before(stack, i));
+                                      pin_number_before(stack, i), g_aesthetic, NULL, -1);
         }
         if (preview) render_one_annotation(cr, preview, TRUE,
-                                           pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0));
+                                           pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0), g_aesthetic, NULL, -1);
         return;
     }
     for (int z = 0; z <= 2; z++) render_annotation_pass(cr, stack, preview, z);
@@ -651,6 +695,106 @@ void miime_render_on_screen(cairo_t *cr,
     miime_render_annotations(cr, stack, preview);
 
     cairo_restore(cr);
+}
+
+static MiimeAestheticStyle drawing_aesthetic(MiimeDrawingStyle style) {
+    return style == MIIME_DRAW_SKETCH ? MIIME_AESTHETIC_ROUGH_SKETCH : MIIME_AESTHETIC_CLEAN_TECHNICAL;
+}
+
+static double resolved_style_font(MiimeDrawingStyle style) {
+    static const double sizes[]={18.0,18.0,20.0,16.0};
+    return style>=MIIME_DRAW_TECHNICAL && style<=MIIME_DRAW_MINIMAL ? sizes[style] : 18.0;
+}
+
+static const MiimeAnnotationStyleResult *resolved_annotation(const MiimeStyleResolution *resolution, int index) {
+    if (!resolution || index < 0 || (guint)index >= resolution->annotation_count) return NULL;
+    return &resolution->annotations[index];
+}
+
+static void render_options_annotation(cairo_t *cr, const MiimeAnnotation *a, int index,
+                                      int pin_number, MiimeAestheticStyle aesthetic,
+                                      const MiimeStyleResolution *resolution) {
+    const MiimeAnnotationStyleResult *appearance = resolved_annotation(resolution, index);
+    if (appearance && appearance->halo_applied) {
+        render_one_annotation(cr, a, FALSE, pin_number, aesthetic, appearance, 0);
+        render_one_annotation(cr, a, FALSE, pin_number, aesthetic, appearance, 1);
+    }
+    render_one_annotation(cr, a, FALSE, pin_number, aesthetic, appearance, -1);
+}
+
+static gboolean get_render_crop(const MiimeAnnotationStack *stack, int img_w, int img_h,
+                                MiimeCrop *crop) {
+    crop->x=0; crop->y=0; crop->width=img_w; crop->height=img_h; crop->enabled=FALSE;
+    int count=stack?miime_annot_stack_count(stack):0;
+    for (int i=count-1;i>=0;i--) {
+        const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
+        if (!a || a->type!=MIIME_ANNOT_CROP || a->point_count<4) continue;
+        double x=fmin(a->points[0],a->points[2]), y=fmin(a->points[1],a->points[3]);
+        double w=fabs(a->points[2]-a->points[0]), h=fabs(a->points[3]-a->points[1]);
+        if (w<1 || h<1) continue;
+        if (x<0) { w+=x; x=0; } if (y<0) { h+=y; y=0; }
+        if (x+w>img_w) w=img_w-x;
+        if (y+h>img_h) h=img_h-y;
+        if (w<1) w=1;
+        if (h<1) h=1;
+        crop->x=(int)x; crop->y=(int)y; crop->width=(int)w; crop->height=(int)h; crop->enabled=TRUE;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+cairo_surface_t *miime_render_export_with_options(MiimeImage *img,
+                                     const MiimeAnnotationStack *stack,
+                                     const MiimeRenderOptions *options,
+                                     int *out_w, int *out_h) {
+    if (!options) return miime_render_export(img, stack, out_w, out_h);
+    if (!img) return NULL;
+    int label_count=0, stack_count=stack?miime_annot_stack_count(stack):0;
+    for(int i=0;i<stack_count;i++) {
+        const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
+        if(a&&a->label_text[0]) label_count++;
+    }
+    if(label_count) {
+        cairo_surface_t *laid_out=NULL;
+        char *json=render_annotations_core(img,stack,0,MIIME_AESTHETIC_CLEAN_TECHNICAL,
+                                           options,FALSE,&laid_out,out_w,out_h);
+        g_free(json);
+        return laid_out;
+    }
+    int img_w=miime_image_width(img), img_h=miime_image_height(img);
+    if (img_w<=0 || img_h<=0) return NULL;
+    MiimeCrop crop; get_render_crop(stack,img_w,img_h,&crop);
+    const MiimeStyleResolution *resolution=options->resolution;
+    MiimeStyleResolution *owned=NULL;
+    if (!resolution) {
+        owned=miime_style_resolve(miime_image_get_surface(img),&options->requested,stack,crop);
+        resolution=owned;
+    }
+    int width=crop.width, height=crop.height;
+    cairo_surface_t *surface=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,width,height);
+    cairo_t *cr=cairo_create(surface);
+    cairo_translate(cr,-crop.x,-crop.y);
+    cairo_set_source_surface(cr,miime_image_get_surface(img),0,0); cairo_paint(cr);
+    int count=stack?miime_annot_stack_count(stack):0;
+    gboolean ordered=FALSE;
+    for(int i=0;i<count;i++) { const MiimeAnnotation *a=miime_annot_stack_get(stack,i); if(a&&(a->has_z||(a->has_ink&&a->ink==MIIME_INK_MARKER))) { ordered=TRUE; break; } }
+    MiimeAestheticStyle aesthetic=drawing_aesthetic(resolution->resolved_drawing_style);
+    if (ordered) {
+        for(int z=0;z<=2;z++) for(int i=0;i<count;i++) {
+            const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
+            if(a&&a->type!=MIIME_ANNOT_CROP&&annotation_z(a)==z)
+                render_options_annotation(cr,a,i,pin_number_before(stack,i),aesthetic,resolution);
+        }
+    } else for(int i=0;i<count;i++) {
+        const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
+        if(a&&a->type!=MIIME_ANNOT_CROP)
+            render_options_annotation(cr,a,i,pin_number_before(stack,i),aesthetic,resolution);
+    }
+    cairo_destroy(cr);
+    if(out_w)*out_w=width;
+    if(out_h)*out_h=height;
+    miime_style_resolution_free(owned);
+    return surface;
 }
 
 cairo_surface_t *miime_render_export(MiimeImage *img,
@@ -719,7 +863,7 @@ cairo_surface_t *miime_render_export(MiimeImage *img,
         for (int i = 0; i < count; i++) {
             const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
             if (a && a->type != MIIME_ANNOT_CROP) {
-                render_one_annotation(cr, a, FALSE, pin_number_before(stack, i));
+                render_one_annotation(cr, a, FALSE, pin_number_before(stack, i), g_aesthetic, NULL, -1);
             }
         }
     }
@@ -731,7 +875,15 @@ cairo_surface_t *miime_render_export(MiimeImage *img,
     return out_surf;
 }
 
-typedef struct { cairo_t *cr; PangoFontDescription *font; } LayoutMeasureContext;
+typedef struct {
+    cairo_t *cr;
+    PangoFontDescription *font;
+    double absolute_font_size;
+    const MiimeLayoutItem *items;
+    const int *stack_indices;
+    int item_count;
+    const MiimeStyleResolution *resolution;
+} LayoutMeasureContext;
 
 static double measure_layout_line(const char *text, void *userdata) {
     LayoutMeasureContext *ctx = userdata;
@@ -742,6 +894,31 @@ static double measure_layout_line(const char *text, void *userdata) {
     pango_layout_get_pixel_size(layout, &width, &height);
     g_object_unref(layout);
     return width;
+}
+
+static void measure_layout_block(const char *text, void *userdata, double max_width,
+                                 double *out_width, double *out_height) {
+    LayoutMeasureContext *ctx=userdata;
+    double font_size=ctx->absolute_font_size;
+    if (ctx->resolution && ctx->items && ctx->stack_indices) {
+        for (int i=0;i<ctx->item_count;i++) if (text==ctx->items[i].text) {
+            const MiimeAnnotationStyleResult *appearance=resolved_annotation(ctx->resolution,ctx->stack_indices[i]);
+            if (appearance) font_size=appearance->font_size;
+            break;
+        }
+    }
+    PangoLayout *layout=pango_cairo_create_layout(ctx->cr);
+    PangoFontDescription *font=pango_font_description_new();
+    pango_font_description_set_family(font,"Sans");
+    pango_font_description_set_absolute_size(font,font_size*PANGO_SCALE);
+    pango_layout_set_font_description(layout,font);
+    pango_layout_set_width(layout,(int)(max_width*PANGO_SCALE));
+    pango_layout_set_wrap(layout,PANGO_WRAP_WORD_CHAR);
+    pango_layout_set_text(layout,text?text:"",-1);
+    int width=0,height=0; pango_layout_get_pixel_size(layout,&width,&height);
+    *out_width=MIN(width,(int)max_width)+16.0;
+    *out_height=height+16.0;
+    pango_font_description_free(font); g_object_unref(layout);
 }
 
 static void layout_port_normal(double x, double y, double w, double h,
@@ -832,10 +1009,11 @@ static void draw_layout_leader(cairo_t *cr, const MiimeAnnotation *a,
     cairo_restore(cr);
 }
 
-char *miime_render_annotations_with_dry_run(MiimeImage *img,
+static char *render_annotations_core(MiimeImage *img,
                                             const MiimeAnnotationStack *stack,
                                             int layout_mode,
                                             MiimeAestheticStyle aesthetic,
+                                            const MiimeRenderOptions *options,
                                             gboolean dry_run,
                                             cairo_surface_t **out_surface,
                                             int *out_w, int *out_h) {
@@ -854,7 +1032,8 @@ char *miime_render_annotations_with_dry_run(MiimeImage *img,
     /* No labels must use the established export path, preserving crop and
      * pixel output exactly for existing callers. */
     if (!label_count && !dry_run && !has_z_order) {
-        cairo_surface_t *legacy = miime_render_export(img, stack, out_w, out_h);
+        cairo_surface_t *legacy = options ? miime_render_export_with_options(img, stack, options, out_w, out_h)
+                                          : miime_render_export(img, stack, out_w, out_h);
         if (out_surface) *out_surface = legacy; else if (legacy) cairo_surface_destroy(legacy);
         return NULL;
     }
@@ -880,6 +1059,13 @@ char *miime_render_annotations_with_dry_run(MiimeImage *img,
         if (crop_h<1) crop_h=1;
     }
     int layout_img_w=(int)crop_w, layout_img_h=(int)crop_h;
+    MiimeCrop source_crop={(int)crop_x,(int)crop_y,layout_img_w,layout_img_h,has_crop};
+    const MiimeStyleResolution *resolution=options?options->resolution:NULL;
+    MiimeStyleResolution *owned_resolution=NULL;
+    if (options && !resolution) {
+        owned_resolution=miime_style_resolve(miime_image_get_surface(img),&options->requested,stack,source_crop);
+        resolution=owned_resolution;
+    }
 
     MiimeLayoutItem items[MIIME_LAYOUT_MAX_ITEMS];
     MiimeLayoutResult results[MIIME_LAYOUT_MAX_ITEMS];
@@ -914,10 +1100,24 @@ char *miime_render_annotations_with_dry_run(MiimeImage *img,
 
     cairo_surface_t *measure_surface=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1);
     cairo_t *measure_cr=cairo_create(measure_surface);
-    LayoutMeasureContext measure={measure_cr,pango_font_description_from_string("Sans 10")};
-    if (n && miime_layout_run(layout_img_w,layout_img_h,items,n,effective_mode,(int)aesthetic,
-                              measure_layout_line,&measure,results)!=0) {
+    double default_font=18.0;
+    if (resolution) default_font=resolved_style_font(resolution->resolved_drawing_style);
+    LayoutMeasureContext measure; memset(&measure,0,sizeof(measure));
+    measure.cr=measure_cr;
+    measure.font=pango_font_description_from_string("Sans 10");
+    measure.absolute_font_size=default_font;
+    measure.items=items; measure.stack_indices=stack_indices; measure.item_count=n;
+    measure.resolution=resolution;
+    int layout_status=0;
+    if (n) {
+        if (options) layout_status=miime_layout_run_with_metrics(layout_img_w,layout_img_h,items,n,effective_mode,(int)aesthetic,
+                              measure_layout_block,&measure,results);
+        else layout_status=miime_layout_run(layout_img_w,layout_img_h,items,n,effective_mode,(int)aesthetic,
+                              measure_layout_line,&measure,results);
+    }
+    if (layout_status!=0) {
         pango_font_description_free(measure.font); cairo_destroy(measure_cr); cairo_surface_destroy(measure_surface);
+        miime_style_resolution_free(owned_resolution);
         return NULL;
     }
     pango_font_description_free(measure.font); cairo_destroy(measure_cr); cairo_surface_destroy(measure_surface);
@@ -941,7 +1141,16 @@ char *miime_render_annotations_with_dry_run(MiimeImage *img,
             }
             seen++;
         }
-        g_string_append(json,"]}");
+        g_string_append(json,"]");
+        if (resolution) {
+            g_string_append_printf(json,",\"resolution\":{\"drawing_style\":\"%s\",\"theme\":%d,\"image_sample_count\":%u,\"contrast_hits\":%u,\"contrast_total\":%u,\"policy\":\"%s\",\"warning_codes\":\"%s\",\"coordinate_space\":\"source_image\",\"crop_x\":%d,\"crop_y\":%d,\"crop_width\":%d,\"crop_height\":%d,\"rail_offset_x\":%d}",
+                miime_style_token(resolution->resolved_drawing_style),(int)resolution->resolved_theme,
+                resolution->image_sample_count,resolution->contrast_hits,resolution->contrast_total,
+                resolution->policy,resolution->warning_codes,source_crop.x,source_crop.y,
+                source_crop.width,source_crop.height,offset_x);
+        }
+        g_string_append_c(json,'}');
+        miime_style_resolution_free(owned_resolution);
         return g_string_free(json,FALSE);
     }
 
@@ -952,21 +1161,28 @@ char *miime_render_annotations_with_dry_run(MiimeImage *img,
     cairo_translate(cr,offset_x-crop_x,-crop_y);
     cairo_surface_t *base=miime_image_get_surface(img);
     if (base) { cairo_set_source_surface(cr,base,0,0); cairo_paint(cr); }
-    miime_render_set_aesthetic(aesthetic);
+    MiimeAestheticStyle render_aesthetic=resolution?drawing_aesthetic(resolution->resolved_drawing_style):aesthetic;
+    if (!options) miime_render_set_aesthetic(aesthetic);
     if (!has_z_order) {
         for (int i=0;i<stack_count;i++) {
             const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
             if (a && a->type!=MIIME_ANNOT_CROP) {
-                if (a->label_text[0]) { MiimeAnnotation copy=*a; copy.label_text[0]='\0'; render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i)); }
-                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i));
+                if (a->label_text[0]) { MiimeAnnotation copy=*a; copy.label_text[0]='\0';
+                    if(options) render_options_annotation(cr,&copy,i,pin_number_before(stack,i),render_aesthetic,resolution);
+                    else render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1); }
+                else if(options) render_options_annotation(cr,a,i,pin_number_before(stack,i),render_aesthetic,resolution);
+                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1);
             }
         }
     } else {
         for (int z=0;z<=2;z++) for (int i=0;i<stack_count;i++) {
             const MiimeAnnotation *a=miime_annot_stack_get(stack,i);
             if (a && a->type!=MIIME_ANNOT_CROP && annotation_z(a)==z) {
-                if (a->label_text[0]) { MiimeAnnotation copy=*a; copy.label_text[0]='\0'; render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i)); }
-                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i));
+                if (a->label_text[0]) { MiimeAnnotation copy=*a; copy.label_text[0]='\0';
+                    if(options) render_options_annotation(cr,&copy,i,pin_number_before(stack,i),render_aesthetic,resolution);
+                    else render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1); }
+                else if(options) render_options_annotation(cr,a,i,pin_number_before(stack,i),render_aesthetic,resolution);
+                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1);
             }
         }
     }
@@ -974,28 +1190,68 @@ char *miime_render_annotations_with_dry_run(MiimeImage *img,
     for (int i=0;i<n;i++) {
         const MiimeAnnotation *a=miime_annot_stack_get(stack,stack_indices[i]);
         MiimeLayoutResult *r=&results[i];
-        if (a) draw_layout_leader(cr,a,&items[i],r,offset_x);
+        if (a) {
+            if (resolution) {
+                const MiimeAnnotationStyleResult *appearance=resolved_annotation(resolution,stack_indices[i]);
+                if (appearance) { MiimeAnnotation copy=*a; copy.color_r=appearance->ink_rgba[0]; copy.color_g=appearance->ink_rgba[1]; copy.color_b=appearance->ink_rgba[2]; copy.color_a=appearance->ink_rgba[3]; draw_layout_leader(cr,&copy,&items[i],r,offset_x); }
+                else draw_layout_leader(cr,a,&items[i],r,offset_x);
+            } else draw_layout_leader(cr,a,&items[i],r,offset_x);
+        }
     }
-    PangoFontDescription *font=pango_font_description_from_string("Sans 10");
     for (int i=0;i<n;i++) {
         const MiimeAnnotation *a=miime_annot_stack_get(stack,stack_indices[i]);
         MiimeLayoutResult *r=&results[i];
+        const MiimeAnnotationStyleResult *appearance=resolved_annotation(resolution,stack_indices[i]);
+        if (appearance && appearance->has_label_surface) {
+            cairo_set_source_rgba(cr,appearance->label_surface_rgba[0],appearance->label_surface_rgba[1],
+                                  appearance->label_surface_rgba[2],appearance->label_surface_rgba[3]);
+            cairo_rectangle(cr,r->label_x,r->label_y,r->label_w,r->label_h); cairo_fill(cr);
+        }
         PangoLayout *layout=pango_cairo_create_layout(cr);
+        PangoFontDescription *font;
+        if (options) {
+            font=pango_font_description_new();
+            pango_font_description_set_family(font,"Sans");
+            double label_font=appearance?appearance->font_size:default_font;
+            pango_font_description_set_absolute_size(font,label_font*PANGO_SCALE);
+        } else font=pango_font_description_from_string("Sans 10");
         pango_layout_set_font_description(layout,font);
         pango_layout_set_width(layout,240*PANGO_SCALE);
         pango_layout_set_wrap(layout,PANGO_WRAP_WORD_CHAR);
         pango_layout_set_text(layout,a->label_text,-1);
-        cairo_set_source_rgba(cr,a->color_r,a->color_g,a->color_b,a->color_a);
-        cairo_move_to(cr,r->label_x,r->label_y);
+        double ink[4]={a->color_r,a->color_g,a->color_b,a->color_a};
+        if (appearance) memcpy(ink,appearance->ink_rgba,sizeof(ink));
+        cairo_set_source_rgba(cr,ink[0],ink[1],ink[2],ink[3]);
+        cairo_move_to(cr,r->label_x+(options?8:0),r->label_y+(options?8:0));
         pango_cairo_show_layout(cr,layout);
+        pango_font_description_free(font);
         g_object_unref(layout);
     }
-    pango_font_description_free(font);
     cairo_destroy(cr);
     if (out_w) *out_w=target_w;
     if (out_h) *out_h=target_h;
     if (out_surface) *out_surface=surface; else cairo_surface_destroy(surface);
+    miime_style_resolution_free(owned_resolution);
     return NULL;
+}
+
+char *miime_render_annotations_with_dry_run(MiimeImage *img,
+                                            const MiimeAnnotationStack *stack,
+                                            int layout_mode, MiimeAestheticStyle aesthetic,
+                                            gboolean dry_run, cairo_surface_t **out_surface,
+                                            int *out_w, int *out_h) {
+    return render_annotations_core(img,stack,layout_mode,aesthetic,NULL,dry_run,out_surface,out_w,out_h);
+}
+
+char *miime_render_annotations_with_options(MiimeImage *img,
+                                            const MiimeAnnotationStack *stack,
+                                            int layout_mode,
+                                            MiimeAestheticStyle legacy_aesthetic,
+                                            const MiimeRenderOptions *options,
+                                            gboolean dry_run,
+                                            cairo_surface_t **out_surface,
+                                            int *out_w, int *out_h) {
+    return render_annotations_core(img,stack,layout_mode,legacy_aesthetic,options,dry_run,out_surface,out_w,out_h);
 }
 
 gboolean miime_render_save_to_file(cairo_surface_t *surface, const char *filepath) {

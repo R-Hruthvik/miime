@@ -2,6 +2,7 @@
 #include "../src/annotate.h"
 #include "../src/image.h"
 #include "../src/sketch.h"
+#include "../src/style.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -158,6 +159,251 @@ static uint32_t pixel_value(cairo_surface_t *surface, int x, int y) {
     uint32_t *pixels = (uint32_t *)cairo_image_surface_get_data(surface);
     int stride = cairo_image_surface_get_stride(surface) / (int)sizeof(uint32_t);
     return pixels[y * stride + x];
+}
+
+static char *surface_sha256(cairo_surface_t *surface) {
+    cairo_surface_flush(surface);
+    int height=cairo_image_surface_get_height(surface);
+    int stride=cairo_image_surface_get_stride(surface);
+    GChecksum *sum=g_checksum_new(G_CHECKSUM_SHA256);
+    g_checksum_update(sum,cairo_image_surface_get_data(surface),(gssize)stride*height);
+    char *hash=g_strdup(g_checksum_get_string(sum));
+    g_checksum_free(sum);
+    return hash;
+}
+
+static void test_render_legacy_hashes_without_options(void) {
+    GdkPixbuf *pb=gdk_pixbuf_new(GDK_COLORSPACE_RGB,TRUE,8,96,72);
+    gdk_pixbuf_fill(pb,0x9ab4c8ff); gdk_pixbuf_save(pb,"/tmp/miime_legacy_hash.png","png",NULL,NULL); g_object_unref(pb);
+    MiimeImage *img=miime_image_load("/tmp/miime_legacy_hash.png"); assert(img);
+    MiimeAnnotationStack *stack=miime_annot_stack_new();
+    MiimeAnnotation a; memset(&a,0,sizeof(a)); a.type=MIIME_ANNOT_RECT;
+    a.points[0]=10; a.points[1]=12; a.points[2]=48; a.points[3]=50; a.point_count=4;
+    a.color_r=.9; a.color_g=.1; a.color_b=.2; a.color_a=.85;
+    strcpy(a.label_text,"Legacy label"); miime_annot_stack_push(stack,a);
+    miime_render_set_aesthetic(MIIME_AESTHETIC_ROUGH_SKETCH);
+    cairo_surface_t *exported=miime_render_export(img,stack,NULL,NULL); assert(exported);
+    char *hash=surface_sha256(exported);
+    assert(strcmp(hash,"85eed7a48c2db46b65cf95ec9dc694f8828cdcd7c5b6730afd5837a06586866e")==0);
+    g_free(hash); cairo_surface_destroy(exported);
+    cairo_surface_t *laid_out=NULL;
+    char *json=miime_render_annotations_with_dry_run(img,stack,1,MIIME_AESTHETIC_ROUGH_SKETCH,
+                                                       FALSE,&laid_out,NULL,NULL);
+    assert(json==NULL && laid_out);
+    hash=surface_sha256(laid_out);
+    assert(strcmp(hash,"266fc1d39c2799982b51f5733378e0896e0b0ee4389545f388509438ae3d9c3c")==0);
+    g_free(hash); cairo_surface_destroy(laid_out);
+    miime_annot_stack_free(stack); miime_image_free(img); remove("/tmp/miime_legacy_hash.png");
+}
+
+static void test_options_renderer_applies_resolved_appearance_without_mutation(void) {
+    GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 80, 60);
+    gdk_pixbuf_fill(pb, 0x202020ff);
+    gdk_pixbuf_save(pb, "/tmp/miime_test_options_base.png", "png", NULL, NULL);
+    g_object_unref(pb);
+    MiimeImage *img = miime_image_load("/tmp/miime_test_options_base.png");
+    assert(img);
+    cairo_surface_t *source = miime_image_get_surface(img);
+    cairo_surface_flush(source);
+    uint32_t source_before = pixel_value(source, 30, 20);
+
+    MiimeAnnotationStack *stack = miime_annot_stack_new();
+    MiimeAnnotation a; memset(&a, 0, sizeof(a));
+    a.type = MIIME_ANNOT_RECT;
+    a.points[0] = 20; a.points[1] = 15; a.points[2] = 55; a.points[3] = 45;
+    a.point_count = 4;
+    a.has_stroke_width = FALSE;
+    a.json_id[0] = 'r'; a.json_id[1] = '\0';
+    miime_annot_stack_push(stack, a);
+    MiimeAnnotation original = *miime_annot_stack_get(stack, 0);
+    MiimeAnnotation blur; memset(&blur,0,sizeof(blur));
+    blur.type=MIIME_ANNOT_BLUR; blur.points[0]=2; blur.points[1]=2;
+    blur.point_count=4; blur.blur_width=4; blur.blur_height=4; blur.blur_stride=16;
+    blur.blur_data=calloc(4*4,4); assert(blur.blur_data);
+    memset(blur.blur_data,0x5a,4*4*4);
+    unsigned char blur_snapshot[4*4*4]; memcpy(blur_snapshot,blur.blur_data,sizeof(blur_snapshot));
+    unsigned char *blur_owner=blur.blur_data;
+    miime_annot_stack_push(stack,blur);
+
+    MiimeRenderOptions options; memset(&options, 0, sizeof(options));
+    options.requested.has_theme = TRUE;
+    options.requested.theme = MIIME_THEME_DARK;
+    options.requested.has_drawing_style = TRUE;
+    options.requested.drawing_style = MIIME_DRAW_EDITORIAL;
+    int w = 0, h = 0;
+    cairo_surface_t *rendered = miime_render_export_with_options(img, stack, &options, &w, &h);
+    assert(rendered && w == 80 && h == 60);
+    /* Dark-theme ink is #F1F3F4; resolved colors must reach actual geometry. */
+    uint32_t edge = pixel_value(rendered, 37, 15);
+    assert(((edge >> 16) & 255) > 225 && ((edge >> 8) & 255) > 225 && (edge & 255) > 225);
+    assert(pixel_value(source, 30, 20) == source_before);
+    const MiimeAnnotation *after = miime_annot_stack_get(stack, 0);
+    assert(memcmp(&original, after, sizeof(original)) == 0);
+    assert(miime_annot_stack_get(stack,1)->blur_data==blur_owner);
+    assert(memcmp(miime_annot_stack_get(stack,1)->blur_data,blur_snapshot,sizeof(blur_snapshot))==0);
+    cairo_surface_destroy(rendered);
+
+    /* Explicit per-annotation color remains authoritative under a theme. */
+    a.has_color = TRUE; a.color_r = 1.0; a.color_g = 0.0; a.color_b = 0.0; a.color_a = 1.0;
+    miime_annot_stack_clear(stack); miime_annot_stack_push(stack, a);
+    rendered = miime_render_export_with_options(img, stack, &options, &w, &h);
+    assert(rendered);
+    edge = pixel_value(rendered, 37, 15);
+    assert(((edge >> 16) & 255) > 220 && ((edge >> 8) & 255) < 40 && (edge & 255) < 40);
+    cairo_surface_destroy(rendered);
+    miime_annot_stack_free(stack); miime_image_free(img);
+    remove("/tmp/miime_test_options_base.png");
+}
+
+static void test_options_layout_uses_crop_rail_and_shared_resolution(void) {
+    GdkPixbuf *pb=gdk_pixbuf_new(GDK_COLORSPACE_RGB,FALSE,8,80,60);
+    gdk_pixbuf_fill(pb,0xffffffff);
+    for (int y=10;y<50;y++) for (int x=20;x<60;x++) {
+        guchar *p=gdk_pixbuf_get_pixels(pb)+y*gdk_pixbuf_get_rowstride(pb)+x*3;
+        p[0]=p[1]=p[2]=0x18;
+    }
+    gdk_pixbuf_save(pb,"/tmp/miime_test_options_crop.png","png",NULL,NULL); g_object_unref(pb);
+    MiimeImage *img=miime_image_load("/tmp/miime_test_options_crop.png"); assert(img);
+    MiimeAnnotationStack *stack=miime_annot_stack_new();
+    MiimeAnnotation crop; memset(&crop,0,sizeof(crop)); crop.type=MIIME_ANNOT_CROP;
+    crop.points[0]=20; crop.points[1]=10; crop.points[2]=60; crop.points[3]=50; crop.point_count=4;
+    miime_annot_stack_push(stack,crop);
+    MiimeAnnotation label; memset(&label,0,sizeof(label)); label.type=MIIME_ANNOT_RECT;
+    label.points[0]=30; label.points[1]=20; label.points[2]=45; label.points[3]=35; label.point_count=4;
+    strcpy(label.label_text,"crop rail label");
+    miime_annot_stack_push(stack,label);
+
+    MiimeRenderOptions options; memset(&options,0,sizeof(options));
+    options.requested.has_theme=TRUE; options.requested.theme=MIIME_THEME_AUTO;
+    options.requested.has_drawing_style=TRUE; options.requested.drawing_style=MIIME_DRAW_MINIMAL;
+    cairo_surface_t *resolution_source=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,80,60);
+    cairo_t *copy=cairo_create(resolution_source);
+    cairo_set_source_surface(copy,miime_image_get_surface(img),0,0); cairo_paint(copy); cairo_destroy(copy);
+    MiimeCrop source_crop={20,10,40,40,TRUE};
+    MiimeStyleResolution *resolution=miime_style_resolve(resolution_source,&options.requested,stack,source_crop);
+    assert(resolution && resolution->resolved_theme==MIIME_THEME_DARK);
+    options.resolution=resolution;
+
+    cairo_surface_t *out=NULL; int w=0,h=0;
+    char *json=miime_render_annotations_with_options(img,stack,1,MIIME_AESTHETIC_CLEAN_TECHNICAL,
+                                                       &options,TRUE,&out,&w,&h);
+    assert(json && !out && strstr(json,"\"theme\":2") && strstr(json,"\"drawing_style\":\"minimal\""));
+    g_free(json);
+    json=miime_render_annotations_with_options(img,stack,1,MIIME_AESTHETIC_CLEAN_TECHNICAL,
+                                                &options,FALSE,&out,&w,&h);
+    assert(!json && out && w==640 && h==40);
+    /* Source crop begins at output x=300; rail surfaces are separate opaque pixels. */
+    assert(pixel_value(out,300,0)==pixel_value(miime_image_get_surface(img),20,10));
+    json=miime_render_annotations_with_options(img,stack,1,MIIME_AESTHETIC_CLEAN_TECHNICAL,
+                                                &options,TRUE,NULL,NULL,NULL);
+    assert(json && strstr(json,"\"resolution\":{\"drawing_style\":\"minimal\",\"theme\":2"));
+    assert(strstr(json,"\"coordinate_space\":\"source_image\",\"crop_x\":20,\"crop_y\":10,\"crop_width\":40,\"crop_height\":40,\"rail_offset_x\":300"));
+    const char *placement=strstr(json,"\"label_x\":");
+    assert(placement);
+    double lx=0,ly=0,lw=0,lh=0;
+    assert(sscanf(placement,"\"label_x\":%lf,\"label_y\":%lf,\"label_w\":%lf,\"label_h\":%lf",&lx,&ly,&lw,&lh)==4);
+    assert(lw>16 && lh>16);
+    int sx=(int)lx+1, sy=(int)ly+1;
+    assert(pixel_alpha(out,sx,sy)==255);
+    g_free(json); cairo_surface_destroy(out);
+    miime_style_resolution_free(resolution); cairo_surface_destroy(resolution_source);
+    miime_annot_stack_free(stack); miime_image_free(img); remove("/tmp/miime_test_options_crop.png");
+}
+
+static void test_style_tokens_change_geometry_and_pango_metrics(void) {
+    static const double widths[]={2.0,2.5,3.0,1.5};
+    static const double radii[]={4.0,8.0,10.0,2.0};
+    static const double fonts[]={18.0,18.0,20.0,16.0};
+    GdkPixbuf *pb=gdk_pixbuf_new(GDK_COLORSPACE_RGB,FALSE,8,80,60);
+    gdk_pixbuf_fill(pb,0xffffffff); gdk_pixbuf_save(pb,"/tmp/miime_test_style_geometry.png","png",NULL,NULL); g_object_unref(pb);
+    MiimeImage *img=miime_image_load("/tmp/miime_test_style_geometry.png"); assert(img);
+    MiimeAnnotationStack *stack=miime_annot_stack_new();
+    MiimeAnnotation a; memset(&a,0,sizeof(a)); a.type=MIIME_ANNOT_LINE;
+    a.points[0]=20; a.points[1]=20; a.points[2]=60; a.points[3]=20; a.point_count=4;
+    a.label_text[0]='x'; a.label_text[1]='\0';
+    strcpy(a.label_text,"A long label whose wrapped Pango metrics respond to the requested absolute font size");
+    miime_annot_stack_push(stack,a);
+    MiimeAnnotationStack *shape_stack=miime_annot_stack_new();
+    MiimeAnnotation shape=a; shape.label_text[0]='\0';
+    miime_annot_stack_push(shape_stack,shape);
+    int changed_counts[4]={0}; double label_widths[4]={0},label_heights[4]={0};
+    for(int s=0;s<4;s++) {
+        MiimeRenderOptions options; memset(&options,0,sizeof(options));
+        options.requested.has_theme=TRUE; options.requested.theme=MIIME_THEME_LIGHT;
+        options.requested.has_drawing_style=TRUE; options.requested.drawing_style=(MiimeDrawingStyle)s;
+        MiimeCrop full={0,0,80,60,FALSE};
+        MiimeStyleResolution *resolved=miime_style_resolve(miime_image_get_surface(img),&options.requested,shape_stack,full);
+        assert(resolved && resolved->annotation_count==1);
+        assert(resolved->annotations[0].stroke_width==widths[s]);
+        assert(resolved->annotations[0].radius==radii[s]);
+        assert(resolved->annotations[0].font_size==fonts[s]);
+        options.resolution=resolved;
+        int w=0,h=0; cairo_surface_t *out=miime_render_export_with_options(img,shape_stack,&options,&w,&h);
+        assert(out && w==80 && h==60);
+        for(int y=15;y<=25;y++) if(pixel_value(out,40,y)!=0xffffffffu) changed_counts[s]++;
+        cairo_surface_destroy(out);
+        char *json=miime_render_annotations_with_options(img,stack,2,MIIME_AESTHETIC_CLEAN_TECHNICAL,
+                                                          &options,TRUE,NULL,NULL,NULL);
+        assert(json);
+        const char *placement=strstr(json,"\"label_x\":");
+        double lx=0,ly=0;
+        assert(placement && sscanf(placement,"\"label_x\":%lf,\"label_y\":%lf,\"label_w\":%lf,\"label_h\":%lf",
+                                   &lx,&ly,&label_widths[s],&label_heights[s])==4);
+        g_free(json); miime_style_resolution_free(resolved);
+    }
+    assert(changed_counts[2]>changed_counts[3]);
+    assert(label_widths[2]>label_widths[3] && label_heights[2]>label_heights[3]);
+    miime_annot_stack_free(shape_stack); miime_annot_stack_free(stack); miime_image_free(img); remove("/tmp/miime_test_style_geometry.png");
+}
+
+static void test_all_themes_preserve_source_and_report_local_coverage(void) {
+    GdkPixbuf *pb=gdk_pixbuf_new(GDK_COLORSPACE_RGB,TRUE,8,64,48);
+    gdk_pixbuf_fill(pb,0x8090a080); gdk_pixbuf_save(pb,"/tmp/miime_test_all_themes.png","png",NULL,NULL); g_object_unref(pb);
+    MiimeImage *img=miime_image_load("/tmp/miime_test_all_themes.png"); assert(img);
+    MiimeAnnotationStack *stack=miime_annot_stack_new();
+    MiimeAnnotation a; memset(&a,0,sizeof(a)); a.type=MIIME_ANNOT_LINE;
+    a.points[0]=20; a.points[1]=20; a.points[2]=44; a.points[3]=20; a.point_count=4;
+    miime_annot_stack_push(stack,a);
+    uint32_t untouched=pixel_value(miime_image_get_surface(img),2,2);
+    const MiimeTheme themes[]={MIIME_THEME_AUTO,MIIME_THEME_LIGHT,MIIME_THEME_DARK,MIIME_THEME_WARM,MIIME_THEME_NEUTRAL};
+    for(size_t i=0;i<sizeof(themes)/sizeof(themes[0]);i++) {
+        MiimeRenderOptions options; memset(&options,0,sizeof(options));
+        options.requested.has_theme=TRUE; options.requested.theme=themes[i];
+        int w=0,h=0; cairo_surface_t *out=miime_render_export_with_options(img,stack,&options,&w,&h);
+        assert(out && w==64 && h==48);
+        assert(pixel_value(out,2,2)==untouched && pixel_alpha(out,2,2)==0x80);
+        cairo_surface_t *clean=miime_image_get_surface(img); MiimeCrop full={0,0,64,48,FALSE};
+        MiimeStyleResolution *r=miime_style_resolve(clean,&options.requested,stack,full);
+        assert(r && r->contrast_hits<=r->contrast_total && r->annotation_count==1);
+        assert(r->annotations[0].contrast_hits<=r->annotations[0].local_sample_count);
+        if(r->annotations[0].contrast_hits<r->annotations[0].local_sample_count)
+            assert(r->annotations[0].contrast_unresolved);
+        miime_style_resolution_free(r); cairo_surface_destroy(out);
+    }
+    miime_annot_stack_free(stack); miime_image_free(img); remove("/tmp/miime_test_all_themes.png");
+}
+
+static void test_contrast_fallback_draws_dual_halo_on_path(void) {
+    GdkPixbuf *pb=gdk_pixbuf_new(GDK_COLORSPACE_RGB,FALSE,8,64,48);
+    gdk_pixbuf_fill(pb,0x202020ff); gdk_pixbuf_save(pb,"/tmp/miime_test_dual_halo.png","png",NULL,NULL); g_object_unref(pb);
+    MiimeImage *img=miime_image_load("/tmp/miime_test_dual_halo.png"); assert(img);
+    MiimeAnnotationStack *stack=miime_annot_stack_new();
+    MiimeAnnotation line; memset(&line,0,sizeof(line)); line.type=MIIME_ANNOT_LINE;
+    line.points[0]=12; line.points[1]=20; line.points[2]=52; line.points[3]=20; line.point_count=4;
+    miime_annot_stack_push(stack,line);
+    MiimeRenderOptions options; memset(&options,0,sizeof(options));
+    options.requested.has_theme=TRUE; options.requested.theme=MIIME_THEME_LIGHT;
+    options.requested.has_drawing_style=TRUE; options.requested.drawing_style=MIIME_DRAW_EDITORIAL;
+    MiimeCrop full={0,0,64,48,FALSE};
+    MiimeStyleResolution *r=miime_style_resolve(miime_image_get_surface(img),&options.requested,stack,full);
+    assert(r && r->annotations[0].halo_applied && r->annotations[0].contrast_hits>0);
+    options.resolution=r;
+    cairo_surface_t *out=miime_render_export_with_options(img,stack,&options,NULL,NULL); assert(out);
+    uint32_t outer=pixel_value(out,32,17), inner=pixel_value(out,32,19);
+    assert(((outer>>16)&255)>0x70 && ((outer>>8)&255)>0x70 && (outer&255)>0x70);
+    assert(((inner>>16)&255)<0x60 && ((inner>>8)&255)<0x60 && (inner&255)<0x60);
+    cairo_surface_destroy(out); miime_style_resolution_free(r); miime_annot_stack_free(stack);
+    miime_image_free(img); remove("/tmp/miime_test_dual_halo.png");
 }
 
 typedef struct { unsigned char *data; size_t len, cap; } PngBytes;
@@ -828,6 +1074,13 @@ static void test_render_export(void) {
     cairo_surface_t *surf = miime_render_export(img, stack, &w, &h);
     assert(surf != NULL);
     assert(w == 100 && h == 100);
+    int option_w=0,option_h=0;
+    cairo_surface_t *null_options=miime_render_export_with_options(img,stack,NULL,&option_w,&option_h);
+    assert(null_options && option_w==w && option_h==h);
+    cairo_surface_flush(surf); cairo_surface_flush(null_options);
+    size_t surface_bytes=(size_t)cairo_image_surface_get_stride(surf)*h;
+    assert(memcmp(cairo_image_surface_get_data(surf),cairo_image_surface_get_data(null_options),surface_bytes)==0);
+    cairo_surface_destroy(null_options);
 
     gboolean saved_png = miime_render_save_to_file(surf, "/tmp/miime_test_out.png");
     assert(saved_png == TRUE);
@@ -938,6 +1191,7 @@ static void test_layout_export_and_dry_run_cap(void) {
 }
 
 int main(void) {
+    test_render_legacy_hashes_without_options();
     test_render_shapes_offscreen();
     test_render_annotation_vocabulary();
     test_freehand_is_smoothed_and_deterministic();
@@ -955,6 +1209,11 @@ int main(void) {
     test_callout_chooses_nearest_target_edge();
     test_render_export();
     test_layout_export_and_dry_run_cap();
+    test_options_renderer_applies_resolved_appearance_without_mutation();
+    test_options_layout_uses_crop_rail_and_shared_resolution();
+    test_style_tokens_change_geometry_and_pango_metrics();
+    test_all_themes_preserve_source_and_report_local_coverage();
+    test_contrast_fallback_draws_dual_halo_on_path();
     printf("All render tests passed.\n");
     return 0;
 }
