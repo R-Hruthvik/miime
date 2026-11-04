@@ -9,6 +9,8 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#define MIIME_OPTIONS_LABEL_FONT_FAMILY "DejaVu Sans"
+
 static MiimeAestheticStyle g_aesthetic = MIIME_AESTHETIC_ROUGH_SKETCH;
 
 static char *render_annotations_core(MiimeImage *img, const MiimeAnnotationStack *stack,
@@ -207,7 +209,8 @@ static void render_arrow_geometry(cairo_t *cr, MiimeSketchRng *rng,
 
 static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *input, gboolean is_preview,
                                   int pin_number, MiimeAestheticStyle aesthetic,
-                                  const MiimeAnnotationStyleResult *appearance, int halo_layer) {
+                                  const MiimeAnnotationStyleResult *appearance, int halo_layer,
+                                  gboolean options_aware) {
     MiimeAnnotation styled;
     const MiimeAnnotation *a = input;
     if (!a) return;
@@ -422,7 +425,7 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *input, gbo
                 cairo_stroke(cr);
                 PangoLayout *layout = pango_cairo_create_layout(cr);
                 PangoFontDescription *font = pango_font_description_new();
-                pango_font_description_set_family(font, "Sans");
+                pango_font_description_set_family(font, options_aware ? MIIME_OPTIONS_LABEL_FONT_FAMILY : "Sans");
                 pango_font_description_set_absolute_size(font,
                     (a->font_size > 0.0 ? a->font_size : radius) * PANGO_SCALE);
                 pango_layout_set_font_description(layout, font);
@@ -508,9 +511,9 @@ static void render_one_annotation(cairo_t *cr, const MiimeAnnotation *input, gbo
             double size = (a->font_size > 0.0) ? a->font_size : 18.0;
             PangoLayout *layout = pango_cairo_create_layout(cr);
             PangoFontDescription *font;
-            if (appearance) {
+            if (appearance || options_aware) {
                 font=pango_font_description_new();
-                pango_font_description_set_family(font,"Sans");
+                pango_font_description_set_family(font,MIIME_OPTIONS_LABEL_FONT_FAMILY);
                 pango_font_description_set_absolute_size(font,size*PANGO_SCALE);
             } else {
                 char font_desc_str[64];
@@ -621,12 +624,12 @@ static void render_annotation_pass(cairo_t *cr, const MiimeAnnotationStack *stac
         int count = miime_annot_stack_count(stack);
         for (int i = 0; i < count; i++) {
             const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
-            if (annotation_z(a) == z) render_one_annotation(cr, a, FALSE, pin_number_before(stack, i), g_aesthetic, NULL, -1);
+            if (annotation_z(a) == z) render_one_annotation(cr, a, FALSE, pin_number_before(stack, i), g_aesthetic, NULL, -1, FALSE);
         }
     }
     if (preview && annotation_z(preview) == z)
         render_one_annotation(cr, preview, TRUE,
-                              pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0), g_aesthetic, NULL, -1);
+                              pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0), g_aesthetic, NULL, -1, FALSE);
 }
 
 void miime_render_annotations(cairo_t *cr,
@@ -647,10 +650,10 @@ void miime_render_annotations(cairo_t *cr,
             int count = miime_annot_stack_count(stack);
             for (int i = 0; i < count; i++)
                 render_one_annotation(cr, miime_annot_stack_get(stack, i), FALSE,
-                                      pin_number_before(stack, i), g_aesthetic, NULL, -1);
+                                      pin_number_before(stack, i), g_aesthetic, NULL, -1, FALSE);
         }
         if (preview) render_one_annotation(cr, preview, TRUE,
-                                           pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0), g_aesthetic, NULL, -1);
+                                           pin_number_before(stack, stack ? miime_annot_stack_count(stack) : 0), g_aesthetic, NULL, -1, FALSE);
         return;
     }
     for (int z = 0; z <= 2; z++) render_annotation_pass(cr, stack, preview, z);
@@ -716,10 +719,10 @@ static void render_options_annotation(cairo_t *cr, const MiimeAnnotation *a, int
                                       const MiimeStyleResolution *resolution) {
     const MiimeAnnotationStyleResult *appearance = resolved_annotation(resolution, index);
     if (appearance && appearance->halo_applied) {
-        render_one_annotation(cr, a, FALSE, pin_number, aesthetic, appearance, 0);
-        render_one_annotation(cr, a, FALSE, pin_number, aesthetic, appearance, 1);
+        render_one_annotation(cr, a, FALSE, pin_number, aesthetic, appearance, 0, TRUE);
+        render_one_annotation(cr, a, FALSE, pin_number, aesthetic, appearance, 1, TRUE);
     }
-    render_one_annotation(cr, a, FALSE, pin_number, aesthetic, appearance, -1);
+    render_one_annotation(cr, a, FALSE, pin_number, aesthetic, appearance, -1, TRUE);
 }
 
 static gboolean get_render_crop(const MiimeAnnotationStack *stack, int img_w, int img_h,
@@ -863,7 +866,7 @@ cairo_surface_t *miime_render_export(MiimeImage *img,
         for (int i = 0; i < count; i++) {
             const MiimeAnnotation *a = miime_annot_stack_get(stack, i);
             if (a && a->type != MIIME_ANNOT_CROP) {
-                render_one_annotation(cr, a, FALSE, pin_number_before(stack, i), g_aesthetic, NULL, -1);
+                render_one_annotation(cr, a, FALSE, pin_number_before(stack, i), g_aesthetic, NULL, -1, FALSE);
             }
         }
     }
@@ -909,7 +912,7 @@ static void measure_layout_block(const char *text, void *userdata, double max_wi
     }
     PangoLayout *layout=pango_cairo_create_layout(ctx->cr);
     PangoFontDescription *font=pango_font_description_new();
-    pango_font_description_set_family(font,"Sans");
+    pango_font_description_set_family(font,MIIME_OPTIONS_LABEL_FONT_FAMILY);
     pango_font_description_set_absolute_size(font,font_size*PANGO_SCALE);
     pango_layout_set_font_description(layout,font);
     pango_layout_set_width(layout,(int)(max_width*PANGO_SCALE));
@@ -1169,9 +1172,9 @@ static char *render_annotations_core(MiimeImage *img,
             if (a && a->type!=MIIME_ANNOT_CROP) {
                 if (a->label_text[0]) { MiimeAnnotation copy=*a; copy.label_text[0]='\0';
                     if(options) render_options_annotation(cr,&copy,i,pin_number_before(stack,i),render_aesthetic,resolution);
-                    else render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1); }
+                    else render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1,FALSE); }
                 else if(options) render_options_annotation(cr,a,i,pin_number_before(stack,i),render_aesthetic,resolution);
-                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1);
+                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1,FALSE);
             }
         }
     } else {
@@ -1180,9 +1183,9 @@ static char *render_annotations_core(MiimeImage *img,
             if (a && a->type!=MIIME_ANNOT_CROP && annotation_z(a)==z) {
                 if (a->label_text[0]) { MiimeAnnotation copy=*a; copy.label_text[0]='\0';
                     if(options) render_options_annotation(cr,&copy,i,pin_number_before(stack,i),render_aesthetic,resolution);
-                    else render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1); }
+                    else render_one_annotation(cr,&copy,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1,FALSE); }
                 else if(options) render_options_annotation(cr,a,i,pin_number_before(stack,i),render_aesthetic,resolution);
-                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1);
+                else render_one_annotation(cr,a,FALSE,pin_number_before(stack,i),g_aesthetic,NULL,-1,FALSE);
             }
         }
     }
@@ -1211,7 +1214,7 @@ static char *render_annotations_core(MiimeImage *img,
         PangoFontDescription *font;
         if (options) {
             font=pango_font_description_new();
-            pango_font_description_set_family(font,"Sans");
+            pango_font_description_set_family(font,MIIME_OPTIONS_LABEL_FONT_FAMILY);
             double label_font=appearance?appearance->font_size:default_font;
             pango_font_description_set_absolute_size(font,label_font*PANGO_SCALE);
         } else font=pango_font_description_from_string("Sans 10");

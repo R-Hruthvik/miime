@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pango/pangocairo.h>
 
 static void test_render_shapes_offscreen(void) {
     cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 200, 200);
@@ -349,6 +350,22 @@ static void test_style_tokens_change_geometry_and_pango_metrics(void) {
         double lx=0,ly=0;
         assert(placement && sscanf(placement,"\"label_x\":%lf,\"label_y\":%lf,\"label_w\":%lf,\"label_h\":%lf",
                                    &lx,&ly,&label_widths[s],&label_heights[s])==4);
+        cairo_surface_t *measure_surface=cairo_image_surface_create(CAIRO_FORMAT_ARGB32,1,1);
+        cairo_t *measure_cr=cairo_create(measure_surface);
+        PangoLayout *expected_layout=pango_cairo_create_layout(measure_cr);
+        PangoFontDescription *expected_font=pango_font_description_new();
+        pango_font_description_set_family(expected_font,"DejaVu Sans");
+        pango_font_description_set_absolute_size(expected_font,fonts[s]*PANGO_SCALE);
+        pango_layout_set_font_description(expected_layout,expected_font);
+        pango_layout_set_width(expected_layout,240*PANGO_SCALE);
+        pango_layout_set_wrap(expected_layout,PANGO_WRAP_WORD_CHAR);
+        pango_layout_set_text(expected_layout,a.label_text,-1);
+        int expected_width=0,expected_height=0;
+        pango_layout_get_pixel_size(expected_layout,&expected_width,&expected_height);
+        assert(label_widths[s]==MIN(expected_width,240)+16.0);
+        assert(label_heights[s]==expected_height+16.0);
+        pango_font_description_free(expected_font); g_object_unref(expected_layout);
+        cairo_destroy(measure_cr); cairo_surface_destroy(measure_surface);
         g_free(json); miime_style_resolution_free(resolved);
     }
     assert(changed_counts[2]>changed_counts[3]);

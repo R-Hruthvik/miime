@@ -69,6 +69,8 @@
 
 **Task 2 review follow-up (2026-11-04, halo coverage):** Non-text samples that miss ink-vs-source contrast are evaluated against both opaque white and black halo edges; either passing edge counts as a hit. `halo_applied` marks use of that fallback, and unresolved/override warnings remain only when neither edge rescues the sample. Text continues to use ink-vs-label-surface contrast without halo fallback. Regression coverage includes a gray-source rescue and a low-opacity override that remains unresolved.
 
+**Task 3 review follow-up (2026-11-04, label font family):** The spec pins all labels to `DejaVu Sans`. The options-aware renderer now uses that family consistently for Pango measurement, label drawing, text annotations, and pin numerals; the legacy render path retains its existing font descriptions. `test_style_tokens_change_geometry_and_pango_metrics` compares measured label bounds against Pango metrics for the pinned family.
+
 ### Task 3: Style-aware shared renderer
 
 **Files:** `src/render.h/.c`; tests `tests/test_render.c`.
