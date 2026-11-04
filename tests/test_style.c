@@ -163,9 +163,9 @@ static void test_labeled_shape_tracks_shape_and_label_contrast_independently(voi
     a.type=MIIME_ANNOT_RECT;a.point_count=4;a.points[0]=8;a.points[1]=8;a.points[2]=56;a.points[3]=56;strcpy(a.label_text,"label");
     a.has_color=TRUE;a.color_r=a.color_g=a.color_b=1;a.color_a=1;a.has_label_surface=TRUE;a.label_surface_rgba[0]=a.label_surface_rgba[1]=a.label_surface_rgba[2]=0;a.label_surface_rgba[3]=1;
     miime_annot_stack_push(stack,a);MiimeStyleResolution*r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotation_count==1);
-    MiimeAnnotationStyleResult*z=&r->annotations[0];assert(z->shape_sample_count>0&&z->shape_contrast_hits==0&&z->shape_halo_hits==z->shape_sample_count);assert(z->label_sample_count==1&&z->label_contrast_hits==1);assert(z->contrast_hits==z->shape_halo_hits+z->label_contrast_hits&&!z->contrast_unresolved);
+    MiimeAnnotationStyleResult*z=&r->annotations[0];assert(z->shape_sample_count>0&&z->shape_contrast_hits==0&&z->shape_halo_hits==z->shape_sample_count);assert(z->label_sample_count==0&&z->label_contrast_hits==0);assert(z->contrast_hits==z->shape_halo_hits&&!z->contrast_unresolved);
     miime_style_resolution_free(r);a.label_surface_rgba[0]=a.label_surface_rgba[1]=a.label_surface_rgba[2]=1;miime_annot_stack_clear(stack);miime_annot_stack_push(stack,a);
-    r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].shape_halo_hits==r->annotations[0].shape_sample_count&&r->annotations[0].label_contrast_hits==0&&r->annotations[0].contrast_unresolved);
+    r=miime_style_resolve(s,&c,stack,(MiimeCrop){0});assert(r&&r->annotations[0].shape_halo_hits==r->annotations[0].shape_sample_count&&r->annotations[0].label_sample_count==0&&r->annotations[0].label_contrast_hits==0);
     miime_style_resolution_free(r);miime_annot_stack_free(stack);cairo_surface_destroy(s);
 }
 static void test_bracket_samples_three_drawn_segments_not_endpoint_diagonal(void) {

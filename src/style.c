@@ -192,10 +192,8 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
             sample_annotation(a,x0,y0,w,h,sample_x,sample_y,&z->local_sample_count,z->font_size);
         }
         gboolean direct_text=a->type==MIIME_ANNOT_TEXT;
-        gboolean has_label=a->label_text[0]!='\0';
         if(direct_text) z->label_sample_count=z->local_sample_count;
         else z->shape_sample_count=z->local_sample_count;
-        if(has_label) z->label_sample_count++;
         z->local_sample_count=z->shape_sample_count+z->label_sample_count;
         o->contrast_total+=z->local_sample_count;
         for(guint q=0;q<z->shape_sample_count;q++) {
@@ -222,16 +220,7 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
                 }
             }
         }
-        if(has_label) {
-            int lx=x0,ly=y0;
-            if(a->point_count>=4){lx=(int)floor((a->points[0]+a->points[2])*.5);ly=(int)floor((a->points[1]+a->points[3])*.5);}
-            else if(a->point_count>=2){lx=(int)floor(a->points[0]);ly=(int)floor(a->points[1]);}
-            lx=CLAMP(lx,x0,x0+w-1);ly=CLAMP(ly,y0,y0+h-1);
-            double sr,sg,sb,surface[3],foreground[3];sample_rgb(data,stride,lx,ly,bg,&sr,&sg,&sb);
-            double source[3]={sr,sg,sb},text_ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]};
-            composite_rgba(z->label_surface_rgba,source,surface);composite_rgba(text_ink,surface,foreground);
-            if(contrast(lum(foreground[0],foreground[1],foreground[2]),lum(surface[0],surface[1],surface[2]))>=o->text_target)z->label_contrast_hits++;
-        } else if(direct_text) {
+        if(direct_text) {
             for(guint q=0;q<z->label_sample_count;q++) {
                 double sr,sg,sb,source[3],foreground[3];sample_rgb(data,stride,sample_x[q],sample_y[q],bg,&sr,&sg,&sb);source[0]=sr;source[1]=sg;source[2]=sb;
                 double text_ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]};composite_rgba(text_ink,source,foreground);
@@ -245,6 +234,79 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
     g_free(values); return o;
 }
 void miime_style_resolution_free(MiimeStyleResolution *r) { if(r){g_free(r->annotations);g_free(r);} }
+
+static void style_append_warning(char *buf,const char *warning) {
+    if(strstr(buf,warning))return;
+    size_t n=strlen(buf);if(n<255)snprintf(buf+n,256-n,"%s%s",n?",":"",warning);
+}
+
+static void style_rebuild_placement_warnings(MiimeStyleResolution *r,const MiimeAnnotationStack *stack) {
+    char kept[256]="";
+    if(r->warning_codes[0]) {
+        char **warnings=g_strsplit(r->warning_codes,",",-1);
+        for(guint i=0;warnings[i];i++)
+            if(warnings[i][0]&&strcmp(warnings[i],"contrast_unresolved")&&strcmp(warnings[i],"override_warning"))
+                style_append_warning(kept,warnings[i]);
+        g_strfreev(warnings);
+    }
+    r->contrast_hits=0;r->contrast_total=0;
+    for(guint i=0;i<r->annotation_count;i++) {
+        MiimeAnnotationStyleResult *a=&r->annotations[i];
+        a->local_sample_count=a->shape_sample_count+a->label_sample_count;
+        a->contrast_hits=a->shape_contrast_hits+a->shape_halo_hits+a->label_contrast_hits;
+        a->contrast_unresolved=a->shape_contrast_hits+a->shape_halo_hits<a->shape_sample_count||a->label_contrast_hits<a->label_sample_count;
+        a->override_warning=FALSE;
+        r->contrast_hits+=a->contrast_hits;r->contrast_total+=a->local_sample_count;
+        const MiimeAnnotation *annotation=miime_annot_stack_get(stack,(int)i);
+        gboolean has_override=annotation&&(annotation->has_color||annotation->has_fill_color||annotation->has_label_surface||annotation->has_font_size);
+        if(a->contrast_unresolved) {
+            style_append_warning(kept,"contrast_unresolved");
+            if(has_override){a->override_warning=TRUE;style_append_warning(kept,"override_warning");}
+        }
+    }
+    memcpy(r->warning_codes,kept,sizeof(r->warning_codes));
+}
+
+void miime_style_apply_label_placements(MiimeStyleResolution *r,const cairo_surface_t *src,
+    const MiimeAnnotationStack *stack,MiimeCrop crop,int rail_offset_x,
+    const MiimeLayoutResult *placements,const int *stack_indices,int placement_count) {
+    if(!r||!src||cairo_surface_get_type((cairo_surface_t*)src)!=CAIRO_SURFACE_TYPE_IMAGE||!placements||!stack_indices)return;
+    cairo_surface_t *surface=(cairo_surface_t*)src;cairo_surface_flush(surface);
+    int iw=cairo_image_surface_get_width(surface),ih=cairo_image_surface_get_height(surface),stride=cairo_image_surface_get_stride(surface);
+    const unsigned char *data=cairo_image_surface_get_data(surface);
+    guint32 bg=r->requested.has_analysis_background?r->requested.analysis_background_rgba:0xFFFFFFFFu;
+    double bg_rgb[3]={((bg>>24)&255)/255.0,((bg>>16)&255)/255.0,((bg>>8)&255)/255.0};
+    for(int i=0;i<placement_count;i++) {
+        int annotation_index=stack_indices[i];
+        const MiimeAnnotation *annotation=miime_annot_stack_get(stack,annotation_index);
+        if(!annotation||!annotation->label_text[0]||annotation_index<0||(guint)annotation_index>=r->annotation_count)continue;
+        MiimeAnnotationStyleResult *style=&r->annotations[annotation_index];
+        const MiimeLayoutResult *p=&placements[i];
+        if(p->label_w<=0||p->label_h<=0)continue;
+        guint nx=MIN(8u,MAX(1u,(guint)ceil(p->label_w))),ny=MIN(8u,MAX(1u,(guint)ceil(p->label_h)));
+        guint remaining=style->label_sample_count<64?64-style->label_sample_count:0;
+        for(guint iy=0;iy<ny&&remaining;iy++)for(guint ix=0;ix<nx&&remaining;ix++) {
+            double px=p->label_x+((double)ix+.5)*p->label_w/nx;
+            double py=p->label_y+((double)iy+.5)*p->label_h/ny;
+            double backdrop[3];
+            if(p->mode==0) memcpy(backdrop,bg_rgb,sizeof(backdrop));
+            else {
+                int sx=(int)floor(px-rail_offset_x+crop.x),sy=(int)floor(py+crop.y);
+                if(sx<0||sy<0||sx>=iw||sy>=ih||sx<crop.x||sy<crop.y||sx>=crop.x+crop.width||sy>=crop.y+crop.height)continue;
+                double sr,sg,sb;sample_rgb(data,stride,sx,sy,bg,&sr,&sg,&sb);backdrop[0]=sr;backdrop[1]=sg;backdrop[2]=sb;
+            }
+            double label_surface[3],foreground[3];
+            composite_rgba(style->label_surface_rgba,backdrop,label_surface);
+            double ink[4]={style->ink_rgba[0],style->ink_rgba[1],style->ink_rgba[2],style->ink_rgba[3]};
+            composite_rgba(ink,label_surface,foreground);
+            style->label_sample_count++;
+            remaining--;
+            if(contrast(lum(foreground[0],foreground[1],foreground[2]),lum(label_surface[0],label_surface[1],label_surface[2]))>=r->text_target)
+                style->label_contrast_hits++;
+        }
+    }
+    style_rebuild_placement_warnings(r,stack);
+}
 
 static const char *theme_token(MiimeTheme theme) {
     static const char *tokens[]={"auto","light","dark","warm","neutral"};

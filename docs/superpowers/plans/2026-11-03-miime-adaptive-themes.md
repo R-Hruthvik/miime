@@ -113,6 +113,8 @@
 
 **Final review correction (2026-11-04):** Labeled annotations report contour and label-text contrast independently, including separate direct and halo-rescued shape hits, so shape halo coverage cannot stand in for label text coverage. Bracket diagnostics sample the same two arms and vertical segment rendered by `render.c`, within the 64 unique source-pixel cap. Mixed shape/label coverage and diagonal-only bracket fixtures cover both cases.
 
+**Placement review correction (2026-11-04):** Label-text coverage is now computed after layout from the actual `MiimeLayoutResult` surface rectangle. In-canvas samples map output coordinates through crop origin and rail offset into clean source pixels; margin-rail labels use their declared surface composited over the analysis backdrop instead of sampling a clamped image edge. Translucent surfaces composite over that actual backdrop. The render path copies borrowed resolutions before adding placement diagnostics, keeping dry-run and render metadata deterministic and shape counters independent. Regression coverage includes a high-contrast target with low-contrast placed background, cropped placement coordinates, and a dark source edge beside a margin-rail label.
+
 ## Final acceptance
 
 Before implementation is marked complete, all tests above pass; style/theme request config round-trips idempotently; missing patch config inherits; explicit reset restores byte-identical legacy rendering; dry-run/render resolution metadata matches; existing desktop, headless, and MCP callers retain their current defaults.

@@ -325,6 +325,75 @@ static void test_options_layout_uses_crop_rail_and_shared_resolution(void) {
     miime_annot_stack_free(stack); miime_image_free(img); remove("/tmp/miime_test_options_crop.png");
 }
 
+static void test_label_contrast_uses_placed_surface_backdrop(void) {
+    GdkPixbuf *pb=gdk_pixbuf_new(GDK_COLORSPACE_RGB,FALSE,8,180,120);
+    gdk_pixbuf_fill(pb,0xffffffff);
+    gdk_pixbuf_save(pb,"/tmp/miime_test_label_placement_contrast.png","png",NULL,NULL);
+    g_object_unref(pb);
+    MiimeImage *img=miime_image_load("/tmp/miime_test_label_placement_contrast.png"); assert(img);
+    MiimeAnnotationStack *stack=miime_annot_stack_new();
+    MiimeAnnotation a; memset(&a,0,sizeof(a)); a.type=MIIME_ANNOT_RECT;
+    a.points[0]=84; a.points[1]=54; a.points[2]=96; a.points[3]=66; a.point_count=4;
+    strcpy(a.label_text,"placed label");
+    a.has_label_surface=TRUE;
+    a.label_surface_rgba[0]=a.label_surface_rgba[1]=a.label_surface_rgba[2]=1;
+    a.label_surface_rgba[3]=0.1;
+    miime_annot_stack_push(stack,a);
+    cairo_t *cr=cairo_create(miime_image_get_surface(img));
+    cairo_set_source_rgb(cr,0,0,0); cairo_rectangle(cr,89,59,2,2); cairo_fill(cr);
+    cairo_rectangle(cr,179,0,1,120); cairo_fill(cr);
+    cairo_destroy(cr);
+
+    MiimeRenderOptions options; memset(&options,0,sizeof(options));
+    options.requested.has_theme=TRUE; options.requested.theme=MIIME_THEME_DARK;
+    MiimeCrop full={0,0,180,120,FALSE};
+    MiimeStyleResolution *resolution=miime_style_resolve(miime_image_get_surface(img),&options.requested,stack,full);
+    assert(resolution && resolution->annotations[0].label_sample_count==0);
+    options.resolution=resolution;
+    char *json=miime_render_annotations_with_options(img,stack,2,MIIME_AESTHETIC_CLEAN_TECHNICAL,
+                                                       &options,TRUE,NULL,NULL,NULL);
+    assert(json);
+    /* The centered target is black, while the actual placed translucent label surface is over white. */
+    const char *placement=strstr(json,"\"label_x\":");
+    double lx=0,ly=0,lw=0,lh=0;
+    assert(placement && sscanf(placement,"\"label_x\":%lf,\"label_y\":%lf,\"label_w\":%lf,\"label_h\":%lf",&lx,&ly,&lw,&lh)==4);
+    g_free(json);
+    miime_style_resolution_free(resolution);
+    resolution=miime_style_resolve(miime_image_get_surface(img),&options.requested,stack,full);
+    assert(resolution);
+    options.resolution=resolution;
+    json=miime_render_annotations_with_options(img,stack,2,MIIME_AESTHETIC_CLEAN_TECHNICAL,
+                                                &options,TRUE,NULL,NULL,NULL);
+    assert(json);
+    assert(strstr(json,"\"label_sample_count\":64,\"label_contrast_hits\":0"));
+    assert(strstr(json,"\"contrast_unresolved\":true"));
+    assert(resolution->annotations[0].label_sample_count==0);
+    g_free(json);
+
+    /* Margin-rail labels have no source pixels underneath them; evaluate the declared surface over the analysis backdrop. */
+    json=miime_render_annotations_with_options(img,stack,1,MIIME_AESTHETIC_CLEAN_TECHNICAL,
+                                                &options,TRUE,NULL,NULL,NULL);
+    assert(json);
+    assert(strstr(json,"\"label_sample_count\":64,\"label_contrast_hits\":0"));
+    assert(strstr(json,"\"contrast_unresolved\":true"));
+    g_free(json);
+
+    MiimeAnnotationStack *cropped_stack=miime_annot_stack_new();
+    MiimeAnnotation crop; memset(&crop,0,sizeof(crop)); crop.type=MIIME_ANNOT_CROP;
+    crop.points[0]=40; crop.points[1]=20; crop.points[2]=140; crop.points[3]=100; crop.point_count=4;
+    miime_annot_stack_push(cropped_stack,crop); miime_annot_stack_push(cropped_stack,a);
+    MiimeCrop source_crop={40,20,100,80,TRUE};
+    MiimeStyleResolution *cropped_resolution=miime_style_resolve(miime_image_get_surface(img),&options.requested,cropped_stack,source_crop);
+    assert(cropped_resolution); options.resolution=cropped_resolution;
+    json=miime_render_annotations_with_options(img,cropped_stack,2,MIIME_AESTHETIC_CLEAN_TECHNICAL,
+                                                &options,TRUE,NULL,NULL,NULL);
+    assert(json && strstr(json,"\"crop_x\":40,\"crop_y\":20,\"crop_width\":100,\"crop_height\":80"));
+    assert(strstr(json,"\"label_sample_count\":48,\"label_contrast_hits\":0"));
+    g_free(json); miime_style_resolution_free(cropped_resolution); miime_annot_stack_free(cropped_stack);
+    miime_style_resolution_free(resolution); miime_annot_stack_free(stack); miime_image_free(img);
+    remove("/tmp/miime_test_label_placement_contrast.png");
+}
+
 static void test_style_tokens_change_geometry_and_pango_metrics(void) {
     static const double widths[]={2.0,2.5,3.0,1.5};
     static const double radii[]={4.0,8.0,10.0,2.0};
@@ -1243,6 +1312,7 @@ int main(void) {
     test_layout_export_and_dry_run_cap();
     test_options_renderer_applies_resolved_appearance_without_mutation();
     test_options_layout_uses_crop_rail_and_shared_resolution();
+    test_label_contrast_uses_placed_surface_backdrop();
     test_style_tokens_change_geometry_and_pango_metrics();
     test_all_themes_preserve_source_and_report_local_coverage();
     test_contrast_fallback_draws_dual_halo_on_path();

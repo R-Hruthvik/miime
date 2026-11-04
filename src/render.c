@@ -714,6 +714,14 @@ static const MiimeAnnotationStyleResult *resolved_annotation(const MiimeStyleRes
     return &resolution->annotations[index];
 }
 
+static MiimeStyleResolution *copy_style_resolution(const MiimeStyleResolution *source) {
+    if(!source)return NULL;
+    MiimeStyleResolution *copy=g_new(MiimeStyleResolution,1);*copy=*source;
+    copy->annotations=source->annotation_count?g_new(MiimeAnnotationStyleResult,source->annotation_count):NULL;
+    if(source->annotation_count)memcpy(copy->annotations,source->annotations,sizeof(*source->annotations)*source->annotation_count);
+    return copy;
+}
+
 static void render_options_annotation(cairo_t *cr, const MiimeAnnotation *a, int index,
                                       int pin_number, MiimeAestheticStyle aesthetic,
                                       const MiimeStyleResolution *resolution) {
@@ -1144,6 +1152,16 @@ static char *render_annotations_core(MiimeImage *img,
     }
     pango_font_description_free(measure.font); cairo_destroy(measure_cr); cairo_surface_destroy(measure_surface);
 
+    MiimeStyleResolution *placed_resolution=NULL;
+    if(resolution&&n) {
+        placed_resolution=copy_style_resolution(resolution);
+        if(placed_resolution) {
+            miime_style_apply_label_placements(placed_resolution,miime_image_get_surface(img),stack,
+                                                source_crop,offset_x,results,stack_indices,n);
+            resolution=placed_resolution;
+        }
+    }
+
     if (dry_run) {
         GString *json=g_string_new("{\"placements\":[");
         gboolean comma=FALSE;
@@ -1173,6 +1191,7 @@ static char *render_annotations_core(MiimeImage *img,
             }
         }
         g_string_append_c(json,'}');
+        miime_style_resolution_free(placed_resolution);
         miime_style_resolution_free(owned_resolution);
         return g_string_free(json,FALSE);
     }
@@ -1254,6 +1273,7 @@ static char *render_annotations_core(MiimeImage *img,
     if (out_w) *out_w=target_w;
     if (out_h) *out_h=target_h;
     if (out_surface) *out_surface=surface; else cairo_surface_destroy(surface);
+    miime_style_resolution_free(placed_resolution);
     miime_style_resolution_free(owned_resolution);
     return NULL;
 }

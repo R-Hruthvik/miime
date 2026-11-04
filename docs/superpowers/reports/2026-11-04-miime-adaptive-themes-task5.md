@@ -16,6 +16,8 @@ Contrast sampling now follows actual annotation geometry with bounded, deduplica
 
 The final follow-up adds independent shape and label-text coverage fields for labeled annotations. Shape coverage records direct ink hits and halo-rescued hits separately; label coverage uses the resolved label surface and text target, and both must pass independently. Bracket samples now follow the renderer's two arms and vertical stroke, capped and deduplicated to 64 source pixels. Regression fixtures cover mixed shape/label outcomes and a contrasting diagonal-only background.
 
+The placement review follow-up moves label coverage to the renderer's resolved `MiimeLayoutResult`. In-canvas samples come from source pixels under the actual rendered label surface after crop and rail coordinate mapping. Margin-rail samples composite the declared surface over the configured analysis backdrop, without clamping to source edges; explicit translucent surfaces use the same actual backdrop in either location. A borrowed resolution is copied before placement diagnostics are applied, preserving caller state. Regressions cover target-center false passes, cropped placement, rail-edge clamping, and independent shape counters.
+
 Focused style/schema/render tests, full `make test`, forced `make -B all`, and `git diff --check` passed after these changes. The existing legacy export/layout hashes remain unchanged.
 
 After the final coverage/bracket correction, `make test_style`, full `make test`, `make -B all`, and `git diff --check` passed. The first full-suite attempt used stale desktop objects after the diagnostics struct changed; rebuilding all targets forced MCP/headless/CLI parity back to green.
@@ -28,3 +30,5 @@ After the final coverage/bracket correction, `make test_style`, full `make test`
 - Luna read-only review — no concrete defects found; `git diff --check` was clean at review time.
 - MCP/headless shared fixture hashes and dry-run/render diagnostics parity — passed.
 - Zero-sample coverage regressions — passed for outside-crop annotation and empty crop.
+- Placement-aware label coverage regressions — passed for target-center false passes, translucent backdrop compositing, cropped source mapping, margin-rail edge behavior, and borrowed-resolution immutability.
+- After the placement review correction, `make test`, `make -B all`, and `git diff --check` — passed.

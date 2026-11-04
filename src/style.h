@@ -1,6 +1,7 @@
 #ifndef MIIME_STYLE_H
 #define MIIME_STYLE_H
 #include "annotate.h"
+#include "layout.h"
 #include <cairo.h>
 
 typedef struct { int x, y, width, height; gboolean enabled; } MiimeCrop;
@@ -29,6 +30,10 @@ const MiimeStylePalette *miime_style_palette(MiimeTheme theme);
 const char *miime_style_token(MiimeDrawingStyle style);
 MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *clean_source,
     const MiimeStyleConfig *requested, const MiimeAnnotationStack *stack, MiimeCrop crop);
+void miime_style_apply_label_placements(MiimeStyleResolution *resolution,
+    const cairo_surface_t *clean_source, const MiimeAnnotationStack *stack, MiimeCrop crop,
+    int rail_offset_x, const MiimeLayoutResult *placements, const int *stack_indices,
+    int placement_count);
 void miime_style_resolution_free(MiimeStyleResolution *resolution);
 char *miime_style_resolution_to_json(const MiimeStyleResolution *resolution,
                                      MiimeCrop crop, int rail_offset_x);
