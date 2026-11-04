@@ -107,6 +107,8 @@
 
 **Task 5 review follow-up (2026-11-04):** Dry-run and opted-in render telemetry use the same canonical diagnostics JSON. It reports requested and resolved style/theme, effective analysis background, bounded source sampling and crop/rail coordinates, contrast targets and coverage, per-annotation hit counts, halo use, and warnings. MCP get/patch persistence continues to serialize requested values and explicit overrides only.
 
+**Task 5 review follow-up (2026-11-04, empty coverage):** Aggregate and per-annotation coverage serialize as JSON `null` when their sample denominator is zero. Regression coverage includes an annotation outside the crop and an empty crop, preserving the distinction between no data and full contrast coverage.
+
 ## Final acceptance
 
 Before implementation is marked complete, all tests above pass; style/theme request config round-trips idempotently; missing patch config inherits; explicit reset restores byte-identical legacy rendering; dry-run/render resolution metadata matches; existing desktop, headless, and MCP callers retain their current defaults.

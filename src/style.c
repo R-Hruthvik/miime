@@ -229,14 +229,16 @@ char *miime_style_resolution_to_json(const MiimeStyleResolution *r,MiimeCrop cro
     if(r->requested.has_aesthetic_style)
         json_append_string(json,r->requested.aesthetic_style==MIIME_AESTHETIC_CLEAN_TECHNICAL?"clean_technical":"rough_sketch");
     else g_string_append(json,"null");
-    g_string_append_printf(json,"},\"resolved\":{\"drawing_style\":\"%s\",\"theme\":\"%s\"},\"analysis_background\":\"#%02X%02X%02X\",\"image_sampling\":{\"policy\":\"%s\",\"count\":%u,\"max_count\":4096,\"coordinate_space\":\"source_image\",\"crop_x\":%d,\"crop_y\":%d,\"crop_width\":%d,\"crop_height\":%d,\"rail_offset_x\":%d},\"contrast\":{\"policy\":\"alpha_composited_relative_luminance\",\"text_target\":%.1f,\"shape_target\":%.1f,\"hits\":%u,\"total\":%u,\"coverage\":%.6f},\"warnings\":[",
+    g_string_append_printf(json,"},\"resolved\":{\"drawing_style\":\"%s\",\"theme\":\"%s\"},\"analysis_background\":\"#%02X%02X%02X\",\"image_sampling\":{\"policy\":\"%s\",\"count\":%u,\"max_count\":4096,\"coordinate_space\":\"source_image\",\"crop_x\":%d,\"crop_y\":%d,\"crop_width\":%d,\"crop_height\":%d,\"rail_offset_x\":%d},\"contrast\":{\"policy\":\"alpha_composited_relative_luminance\",\"text_target\":%.1f,\"shape_target\":%.1f,\"hits\":%u,\"total\":%u,\"coverage\":",
         miime_style_token(r->resolved_drawing_style),theme_token(r->resolved_theme),
         (r->requested.has_analysis_background?(r->requested.analysis_background_rgba>>24)&255:255),
         (r->requested.has_analysis_background?(r->requested.analysis_background_rgba>>16)&255:255),
         (r->requested.has_analysis_background?(r->requested.analysis_background_rgba>>8)&255:255),
         r->policy,r->image_sample_count,crop.x,crop.y,crop.width,crop.height,rail_offset_x,
-        r->text_target,r->shape_target,r->contrast_hits,r->contrast_total,
-        r->contrast_total?(double)r->contrast_hits/r->contrast_total:1.0);
+        r->text_target,r->shape_target,r->contrast_hits,r->contrast_total);
+    if(r->contrast_total)g_string_append_printf(json,"%.6f",(double)r->contrast_hits/r->contrast_total);
+    else g_string_append(json,"null");
+    g_string_append(json,"},\"warnings\":[");
     gboolean comma=FALSE;
     if(r->warning_codes[0]) {
         char **warnings=g_strsplit(r->warning_codes,",",-1);
@@ -252,9 +254,11 @@ char *miime_style_resolution_to_json(const MiimeStyleResolution *r,MiimeCrop cro
         const MiimeAnnotationStyleResult *a=&r->annotations[i];
         if(i)g_string_append_c(json,',');
         g_string_append(json,"{\"id\":"); json_append_string(json,a->annotation_id);
-        g_string_append_printf(json,",\"local_sample_count\":%u,\"contrast_hits\":%u,\"coverage\":%.6f,\"halo_applied\":%s,\"contrast_unresolved\":%s,\"override_warning\":%s,\"warnings\":[",
-            a->local_sample_count,a->contrast_hits,
-            a->local_sample_count?(double)a->contrast_hits/a->local_sample_count:1.0,
+        g_string_append_printf(json,",\"local_sample_count\":%u,\"contrast_hits\":%u,\"coverage\":",
+            a->local_sample_count,a->contrast_hits);
+        if(a->local_sample_count)g_string_append_printf(json,"%.6f",(double)a->contrast_hits/a->local_sample_count);
+        else g_string_append(json,"null");
+        g_string_append_printf(json,",\"halo_applied\":%s,\"contrast_unresolved\":%s,\"override_warning\":%s,\"warnings\":[",
             a->halo_applied?"true":"false",a->contrast_unresolved?"true":"false",a->override_warning?"true":"false");
         if(a->contrast_unresolved)json_append_string(json,"contrast_unresolved");
         if(a->contrast_unresolved&&a->override_warning)g_string_append_c(json,',');
