@@ -1,6 +1,6 @@
 # miime Annotation Styles and Image-Safe Themes
 
-**Status: PROPOSED — not approved, not implemented.**
+**Status: APPROVED — implemented on 2026-11-04.**
 
 ## Goal and compatibility
 
@@ -105,5 +105,7 @@ The options-aware layout entry point above owns both drawing and dry-run: resolv
 `MiimeStyleResolution` contains requested/resolved style and theme, policy/background, image and local sample counts, contrast targets and hit/total coverage, per-annotation fallback/warning codes. Add render config and `reset_render_config` to both MCP input schemas and headless JSON config. Dry-run and render metadata for identical input/crop must match byte-for-byte; ordinary render response remains unchanged. `miime_schema_serialize_with_config` emits requested top-level config and annotation overrides only. Under opt-in styles/themes it omits `color`/`font_size` when their presence flags are false, including parser-generated legacy defaults; it must not turn an automatically styled field into an explicit override after get/patch/reload. With no opt-in config it delegates to the unchanged legacy serializer. Missing theme and drawing style remain missing (never serialize a resolved choice).
 
 ## Scope and tradeoffs
+
+This design changes how supplied annotations are rendered. It does not identify screenshot content, decide what deserves annotation, or generate annotation text; those remain caller-authored inputs. The sample image used for a live preview is separate from implementation acceptance fixtures.
 
 Generated light, dark, warm, terminal-like, photo-like and checkerboard fixtures only; no user screenshots or private checked-in fixtures. No UI changes, source wash, recoloring, random choice, network, AI, or runtime dependencies. Palette-only selection misses local readability; arbitrary per-stroke hues flicker and clash; global mutable options leak across concurrent requests; these alternatives are excluded in favor of one deterministic image palette plus local contrast protection.
