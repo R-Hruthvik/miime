@@ -21,6 +21,10 @@ const char *miime_style_token(MiimeDrawingStyle s) {
 static double linear(double c) { return c <= .04045 ? c / 12.92 : pow((c + .055) / 1.055, 2.4); }
 static double lum(double r, double g, double b) { return .2126 * linear(r) + .7152 * linear(g) + .0722 * linear(b); }
 static double contrast(double a, double b) { return (fmax(a,b)+.05)/(fmin(a,b)+.05); }
+static void composite_rgba(const double *fg,const double *bg,double *out) {
+    double alpha=fmin(1.0,fmax(0.0,fg[3]));
+    for(int i=0;i<3;i++) out[i]=fg[i]*alpha+bg[i]*(1-alpha);
+}
 static void append_warning(char *buf,const char *s) {
     if (strstr(buf,s)) return;
     size_t n = strlen(buf); if (n < 255) snprintf(buf+n,256-n,"%s%s",n ? "," : "",s);
@@ -98,7 +102,7 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
     if(req&&req->has_aesthetic_style&&active_config(req)) {
         MiimeDrawingStyle alias=req->aesthetic_style==MIIME_AESTHETIC_CLEAN_TECHNICAL?MIIME_DRAW_TECHNICAL:MIIME_DRAW_SKETCH;
         if(req->has_drawing_style&&req->drawing_style!=alias)append_warning(o->warning_codes,"style_alias_conflict");
-        else if(!req->has_drawing_style&&!(req->has_theme&&req->theme==MIIME_THEME_AUTO))o->resolved_drawing_style=alias;
+        else if(!req->has_drawing_style)o->resolved_drawing_style=alias;
     }
     const MiimeStylePalette *pal=miime_style_palette(o->resolved_theme); strcpy(o->policy,"sRGB_linear_luminance_v1");
     int n=stack?miime_annot_stack_count(stack):0; o->annotation_count=n; o->annotations=n?g_new0(MiimeAnnotationStyleResult,n):NULL;
@@ -110,6 +114,7 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
         copy_rgba(z->label_surface_rgba,pal->label_surface);
         z->stroke_width=(a->has_stroke_width||a->has_stroke_width_pair)?a->stroke_width:(a->has_ink?(double[]){1.5,2.5,4,14}[a->ink]:style_width(o->resolved_drawing_style));
         z->stroke_width_end=a->has_stroke_width_pair?a->stroke_width_end:z->stroke_width;
+        /* Explicit zero retains the legacy 24px fallback while remaining an intentional override. */
         z->font_size=a->has_font_size?(a->font_size>0?a->font_size:24):style_font(o->resolved_drawing_style);
         z->radius=a->has_radius?a->radius:style_radius(o->resolved_drawing_style); z->halo_width=style_halo(o->resolved_drawing_style);
         z->has_fill=a->fill!=0; z->has_label_surface=TRUE;
@@ -127,10 +132,8 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
             int ax1=MIN(x0+w,(int)ceil(maxx)+1),ay1=MIN(y0+h,(int)ceil(maxy)+1);
             aw=MAX(0,ax1-ax0);ah=MAX(0,ay1-ay0);
         }
-        guint lx=MIN((guint)MAX(aw,1),8u),ly=MIN((guint)MAX(ah,1),8u); double min_shape=100,min_text=100;
-        double il=lum(z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2]);
-        double sl=lum(z->label_surface_rgba[0],z->label_surface_rgba[1],z->label_surface_rgba[2]);
-        min_text=contrast(il,sl);
+        guint lx=MIN((guint)MAX(aw,1),8u),ly=MIN((guint)MAX(ah,1),8u);
+        int sample_x[64],sample_y[64];
         if(a->point_count>=4 && a->point_count%2==0) {
             int segs=a->point_count/2-1; double lengths[MIIME_MAX_POINTS/2],total=0;
             for(int j=0;j<segs;j++){double dx=a->points[(j+1)*2]-a->points[j*2],dy=a->points[(j+1)*2+1]-a->points[j*2+1];lengths[j]=hypot(dx,dy);total+=lengths[j];}
@@ -139,24 +142,39 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
                 double dist=((double)q+.5)*total/count; int seg=0; while(seg<segs-1&&dist>lengths[seg]){dist-=lengths[seg];seg++;}
                 double t=lengths[seg]>0?dist/lengths[seg]:0; int px=(int)floor(a->points[seg*2]+t*(a->points[(seg+1)*2]-a->points[seg*2])); int py=(int)floor(a->points[seg*2+1]+t*(a->points[(seg+1)*2+1]-a->points[seg*2+1]));
                 if(px<x0||py<y0||px>=x0+w||py>=y0+h)continue;
-                double r,g,b;sample_rgb(data,stride,px,py,bg,&r,&g,&b);double bg_l=lum(r,g,b);min_shape=fmin(min_shape,contrast(il,bg_l));z->local_sample_count++;
+                gboolean duplicate=FALSE;
+                for(guint q=0;q<z->local_sample_count;q++)if(sample_x[q]==px&&sample_y[q]==py){duplicate=TRUE;break;}
+                if(duplicate)continue;
+                sample_x[z->local_sample_count]=px;sample_y[z->local_sample_count]=py;z->local_sample_count++;
             }
         } else {
-            int seen_x[64],seen_y[64];
             for(guint iy=0;iy<ly;iy++)for(guint ix=0;ix<lx;ix++) {
                 int px=ax0+coord(ix,(guint)MAX(aw,1),lx),py=ay0+coord(iy,(guint)MAX(ah,1),ly);gboolean duplicate=FALSE;
-                for(guint q=0;q<z->local_sample_count;q++)if(seen_x[q]==px&&seen_y[q]==py){duplicate=TRUE;break;}
+                for(guint q=0;q<z->local_sample_count;q++)if(sample_x[q]==px&&sample_y[q]==py){duplicate=TRUE;break;}
                 if(duplicate||px<x0||py<y0||px>=x0+w||py>=y0+h)continue;
-                seen_x[z->local_sample_count]=px;seen_y[z->local_sample_count]=py;
-                double r,g,b;sample_rgb(data,stride,px,py,bg,&r,&g,&b);double bg_l=lum(r,g,b);min_shape=fmin(min_shape,contrast(il,bg_l));z->local_sample_count++;
+                sample_x[z->local_sample_count]=px;sample_y[z->local_sample_count]=py;z->local_sample_count++;
             }
         }
         gboolean is_text=(a->type==MIIME_ANNOT_TEXT||a->label_text[0]);
         double target=is_text?o->text_target:o->shape_target;
-        double minratio=is_text?min_text:min_shape;
         o->contrast_total+=z->local_sample_count;
-        if(minratio>=target){z->contrast_hits=z->local_sample_count;o->contrast_hits+=z->local_sample_count;}
-        else {z->contrast_unresolved=TRUE;z->halo_applied=TRUE;z->contrast_hits=0;append_warning(o->warning_codes,"contrast_unresolved");if(has_override){z->override_warning=TRUE;append_warning(o->warning_codes,"override_warning");}}
+        for(guint q=0;q<z->local_sample_count;q++) {
+            double sr,sg,sb,source[3],surface[3],foreground[3];
+            sample_rgb(data,stride,sample_x[q],sample_y[q],bg,&sr,&sg,&sb);source[0]=sr;source[1]=sg;source[2]=sb;
+            double ratio;
+            if(is_text) {
+                composite_rgba(z->label_surface_rgba,source,surface);
+                double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]};
+                composite_rgba(ink,surface,foreground);
+                ratio=contrast(lum(foreground[0],foreground[1],foreground[2]),lum(surface[0],surface[1],surface[2]));
+            } else {
+                double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]};
+                composite_rgba(ink,source,foreground);
+                ratio=contrast(lum(foreground[0],foreground[1],foreground[2]),lum(source[0],source[1],source[2]));
+            }
+            if(ratio>=target){z->contrast_hits++;o->contrast_hits++;}
+        }
+        if(z->contrast_hits<z->local_sample_count){z->contrast_unresolved=TRUE;z->halo_applied=TRUE;append_warning(o->warning_codes,"contrast_unresolved");if(has_override){z->override_warning=TRUE;append_warning(o->warning_codes,"override_warning");}}
     }
     g_free(values); return o;
 }

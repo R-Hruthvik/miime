@@ -65,6 +65,8 @@
 - [ ] **GREEN:** Implement specified grid formula, feature calculations, exact hex palette tables, auto tie policy, formula contrast checks, opaque label surface selection, dual white/black halo fallback, coverage and warning codes. Draw no pixels in resolver.
 - [ ] Test generated light/dark/warm/terminal/photo/checkerboard surfaces; run `make test_style`.
 
+**Task 2 review follow-up (2026-11-04):** The controller decision ledger governs the `font_size: 0` ambiguity: presence remains explicit and round-trips, but its resolved token uses the legacy 24px fallback. The Luna review's contrary reading of the presence rule is non-blocking; resolver behavior and a regression test now make the accepted precedence explicit. Contrast now composites ink alpha over each sampled source color and evaluates text ink against its resolved label surface (including surface alpha). Coverage counts each passing unique sample, and path samples are deduplicated. The legacy `aesthetic_style` alias now supplies drawing style under `theme: "auto"` when `drawing_style` is absent; explicit `drawing_style` still wins and conflicts remain warned.
+
 ### Task 3: Style-aware shared renderer
 
 **Files:** `src/render.h/.c`; tests `tests/test_render.c`.
