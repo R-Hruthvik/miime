@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -std=c99 -Wall -Wextra -Werror $(shell pkg-config --cflags gtk4)
 LDFLAGS = $(shell pkg-config --libs gtk4) -lm
 
-SRC = src/main.c src/window.c src/image.c src/canvas.c src/render.c src/layout.c src/annotate.c src/tools.c src/clipboard.c src/schema.c src/headless.c src/sketch.c src/freehand.c
+SRC = src/style.c src/main.c src/window.c src/image.c src/canvas.c src/render.c src/layout.c src/annotate.c src/tools.c src/clipboard.c src/schema.c src/headless.c src/sketch.c src/freehand.c
 OBJ = $(SRC:.c=.o)
 BIN = miime
 
@@ -19,7 +19,7 @@ src/%.o: src/%.c
 
 clean:
 	rm -f $(OBJ) $(BIN) miime-mcp
-	rm -f tests/test_image tests/test_annotate tests/test_render tests/test_tools tests/test_schema tests/test_headless tests/test_sketch tests/test_grounding tests/test_layout tests/test_bidir tests/test_mcp
+	rm -f tests/test_image tests/test_annotate tests/test_render tests/test_tools tests/test_schema tests/test_headless tests/test_sketch tests/test_grounding tests/test_layout tests/test_bidir tests/test_mcp tests/test_style
 
 test_sketch: tests/test_sketch.c src/sketch.c src/freehand.c src/render.c src/layout.c src/annotate.c src/image.c
 	$(CC) $(TEST_CFLAGS) tests/test_sketch.c src/sketch.c src/freehand.c src/render.c src/layout.c src/annotate.c src/image.c -o tests/test_sketch $(TEST_LDFLAGS)
@@ -64,8 +64,8 @@ test_bidir: tests/test_bidir.c src/schema.c src/annotate.c
 MCP_CFLAGS = -D_GNU_SOURCE -std=c99 -Wall -Wextra -Werror -Isrc $(shell pkg-config --cflags glib-2.0 gdk-pixbuf-2.0 cairo pango pangocairo)
 MCP_LDFLAGS = $(shell pkg-config --libs glib-2.0 gdk-pixbuf-2.0 cairo pango pangocairo) -lm
 
-miime-mcp: src/mcp_main.c src/mcp.c src/grounding.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c
-	$(CC) $(MCP_CFLAGS) src/mcp_main.c src/mcp.c src/grounding.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c -o miime-mcp $(MCP_LDFLAGS)
+miime-mcp: src/mcp_main.c src/mcp.c src/grounding.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c src/style.c
+	$(CC) $(MCP_CFLAGS) src/mcp_main.c src/mcp.c src/grounding.c src/headless.c src/schema.c src/render.c src/layout.c src/sketch.c src/freehand.c src/annotate.c src/image.c src/style.c -o miime-mcp $(MCP_LDFLAGS)
 
 test_mcp: miime-mcp
 	python3 tests/test_mcp.py
@@ -88,7 +88,15 @@ uninstall:
 	rm -f $(DESTDIR)$(DATADIR)/applications/com.miime.app.desktop
 	rm -f $(DESTDIR)$(DATADIR)/icons/hicolor/scalable/apps/com.miime.app.svg
 
-test: test_schema test_layout test_bidir test_image test_annotate test_render test_tools test_sketch test_headless test_grounding test_mcp
+test: test_schema test_layout test_bidir test_image test_annotate test_render test_tools test_sketch test_headless test_grounding test_style test_mcp
 	@echo "ALL TESTS PASSED"
 
 .PHONY: all clean test test_image test_annotate test_render test_tools test_schema test_headless test_grounding test_layout test_bidir test_mcp miime-mcp
+
+# Adaptive style resolver tests
+
+test_style: tests/test_style.c src/style.c src/annotate.c
+	$(CC) $(TEST_CFLAGS) tests/test_style.c src/style.c src/annotate.c -o tests/test_style $(TEST_LDFLAGS)
+	./tests/test_style
+
+.PHONY: test_style
