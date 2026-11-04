@@ -7,6 +7,8 @@ typedef struct { int x, y, width, height; gboolean enabled; } MiimeCrop;
 typedef struct {
     char annotation_id[32];
     guint local_sample_count, contrast_hits;
+    guint shape_sample_count, shape_contrast_hits, shape_halo_hits;
+    guint label_sample_count, label_contrast_hits;
     gboolean halo_applied, contrast_unresolved, override_warning;
     double ink_rgba[4], fill_rgba[4], label_surface_rgba[4];
     double stroke_width, stroke_width_end, font_size, radius, halo_width;

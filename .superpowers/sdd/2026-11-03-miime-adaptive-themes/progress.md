@@ -27,6 +27,7 @@ Ruling: No-options desktop paths remain legacy; saved JSON with explicit new opt
 Ruling (final review): Desktop annotation files retain root-level requested render config on `MiimeWindow`; save, save-as, copy, annotation export, and `--annotations-out` preserve it. Explicit style/theme/background requests use options-aware export. Alias-only requests use the exact legacy export with the stored aesthetic temporarily applied and restored; absent config stays on the unchanged legacy route.
 Ruling (final review): Local contrast samples follow annotation geometry: line-like paths use bounded, deduplicated segment samples; rectangles and ellipses use contour samples; direct text uses measured text bounds and source pixels beneath the text. Crop and blur are excluded from contrast diagnostics. Direct text has no assumed label surface because the renderer draws it over source pixels.
 Ruling (final review): Marker contrast uses the rendered 0.35 opacity before deciding whether halo fallback is needed.
+Ruling (final review correction): Labeled annotations retain independent contour and label-text sample/hit counts. Halo-rescued shape hits are tracked separately, and unresolved status requires both shape coverage (after halo) and text coverage to meet their own targets. Brackets sample the renderer's three connected segments, bounded and deduplicated to 64 source pixels.
 Task 1: complete (0134e40..8ba73c0, review clean; full make test passes).
 Task 2 BASE: 8ba73c0.
 
@@ -43,3 +44,5 @@ Task 4: complete locally and committed. MCP now validates and merges requested c
 Task 4 verification: RED observed for the missing MCP schema and headless options-renderer hash mismatch. `make test_mcp`, `make test_headless`, full `make test`, forced `make -B all`, and `git diff --check` pass. MCP integration compares identical auto-theme output through MCP, the headless API, and the desktop CLI.
 
 Final review: all four concrete findings in `review-full.diff` are addressed locally. Focused style/schema/render tests, full `make test`, forced `make -B all`, and `git diff --check` pass. Legacy render golden hashes remain covered by `test_render_legacy_hashes_without_options`; saved alias-only config has a separate no-GUI legacy export equivalence regression. No push performed.
+
+Final review correction verification: the two mixed-coverage and bracket-geometry regressions pass in `make test_style`; full `make test`, `make -B all`, and `git diff --check` pass. A first integration run used stale desktop objects after the public diagnostics struct grew; forcing the complete rebuild refreshed all consumers, after which MCP/headless/CLI pixel parity passed.

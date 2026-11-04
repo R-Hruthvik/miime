@@ -111,6 +111,8 @@
 
 **Final review follow-up (2026-11-04):** Desktop annotation import now restores root-level requested render config, and shutdown/export/save/copy preserve and consume it. Config-aware export activates the options renderer for explicit new tokens, keeps alias-only requests on the exact legacy renderer with their stored aesthetic, and leaves absent config on the legacy path. Contrast sampling follows text bounds and drawn shape contours, uses source beneath direct text, skips crop/blur operations, and applies marker's rendered 0.35 alpha before halo decisions. Added regression coverage for config-root roundtrip, alias-only legacy export, contour-vs-diagonal sampling, direct-text source contrast, marker alpha, and crop exclusion.
 
+**Final review correction (2026-11-04):** Labeled annotations report contour and label-text contrast independently, including separate direct and halo-rescued shape hits, so shape halo coverage cannot stand in for label text coverage. Bracket diagnostics sample the same two arms and vertical segment rendered by `render.c`, within the 64 unique source-pixel cap. Mixed shape/label coverage and diagonal-only bracket fixtures cover both cases.
+
 ## Final acceptance
 
 Before implementation is marked complete, all tests above pass; style/theme request config round-trips idempotently; missing patch config inherits; explicit reset restores byte-identical legacy rendering; dry-run/render resolution metadata matches; existing desktop, headless, and MCP callers retain their current defaults.

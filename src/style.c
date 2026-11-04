@@ -82,6 +82,13 @@ static void sample_annotation(const MiimeAnnotation *a,int x0,int y0,int w,int h
         sample_polyline(path,14,TRUE,x0,y0,w,h,xs,ys,count);
         return;
     }
+    if(a->type==MIIME_ANNOT_BRACKET&&a->point_count>=4) {
+        double x1=a->points[0],y1=a->points[1],x2=a->points[2],y2=a->points[3];
+        double side=x2>=x1?1.0:-1.0,arm=fmin(fabs(x2-x1)*.35,10.0);
+        double path[]={x1+side*arm,y1,x1,y1,x1,y2,x1+side*arm,y2};
+        sample_polyline(path,8,FALSE,x0,y0,w,h,xs,ys,count);
+        return;
+    }
     if(is_box_shape(a->type)&&a->point_count>=4) {
         int opposite=a->point_count>=8?4:2;double left=fmin(a->points[0],a->points[opposite]),right=fmax(a->points[0],a->points[opposite]),top=fmin(a->points[1],a->points[opposite+1]),bottom=fmax(a->points[1],a->points[opposite+1]);
         guint n=64;double rx=(right-left)/2,ry=(bottom-top)/2,cx=(left+right)/2,cy=(top+bottom)/2;
@@ -184,27 +191,23 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
         if(a->type==MIIME_ANNOT_TEXT||a->type==MIIME_ANNOT_PIN||is_box_shape(a->type)||a->point_count>=4) {
             sample_annotation(a,x0,y0,w,h,sample_x,sample_y,&z->local_sample_count,z->font_size);
         }
-        gboolean is_text=(a->type==MIIME_ANNOT_TEXT||a->label_text[0]!='\0');
-        gboolean has_text_surface=a->label_text[0]!='\0';
-        double target=is_text?o->text_target:o->shape_target;
+        gboolean direct_text=a->type==MIIME_ANNOT_TEXT;
+        gboolean has_label=a->label_text[0]!='\0';
+        if(direct_text) z->label_sample_count=z->local_sample_count;
+        else z->shape_sample_count=z->local_sample_count;
+        if(has_label) z->label_sample_count++;
+        z->local_sample_count=z->shape_sample_count+z->label_sample_count;
         o->contrast_total+=z->local_sample_count;
-        for(guint q=0;q<z->local_sample_count;q++) {
-            double sr,sg,sb,source[3],surface[3],foreground[3];
+        for(guint q=0;q<z->shape_sample_count;q++) {
+            double sr,sg,sb,source[3],foreground[3];
             sample_rgb(data,stride,sample_x[q],sample_y[q],bg,&sr,&sg,&sb);source[0]=sr;source[1]=sg;source[2]=sb;
-            double ratio;
-            if(has_text_surface) {
-                composite_rgba(z->label_surface_rgba,source,surface);
-                double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]};
-                composite_rgba(ink,surface,foreground);
-                ratio=contrast(lum(foreground[0],foreground[1],foreground[2]),lum(surface[0],surface[1],surface[2]));
-            } else {
-                double marker_alpha=(a->has_ink&&a->ink==MIIME_INK_MARKER)?.35:1.0;
-                double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]*marker_alpha};
-                composite_rgba(ink,source,foreground);
-                ratio=contrast(lum(foreground[0],foreground[1],foreground[2]),lum(source[0],source[1],source[2]));
-            }
-            if(ratio>=target){z->contrast_hits++;o->contrast_hits++;}
-            else if(!is_text) {
+            double marker_alpha=(a->has_ink&&a->ink==MIIME_INK_MARKER)?.35:1.0;
+            double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]*marker_alpha};
+            composite_rgba(ink,source,foreground);
+            double ratio=contrast(lum(foreground[0],foreground[1],foreground[2]),lum(source[0],source[1],source[2]));
+            gboolean passed=ratio>=(direct_text?o->text_target:o->shape_target);
+            if(passed) z->shape_contrast_hits++;
+            else if(!direct_text) {
                 /* A missed shape sample receives the specified opaque dual halo.
                  * Evaluate the ink against each adjacent neutral edge; either edge
                  * can provide enough separation for the rendered stroke. */
@@ -215,11 +218,29 @@ MiimeStyleResolution *miime_style_resolve(const cairo_surface_t *src,const Miime
                     double ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]*marker_alpha}, halo_fg[3];
                     composite_rgba(ink,halo_edges[edge],halo_fg);
                     double halo_ratio=contrast(lum(halo_fg[0],halo_fg[1],halo_fg[2]),lum(halo_edges[edge][0],halo_edges[edge][1],halo_edges[edge][2]));
-                    if(halo_ratio>=target){z->contrast_hits++;o->contrast_hits++;break;}
+                    if(halo_ratio>=o->shape_target){z->shape_halo_hits++;break;}
                 }
             }
         }
-        if(z->contrast_hits<z->local_sample_count){z->contrast_unresolved=TRUE;append_warning(o->warning_codes,"contrast_unresolved");if(has_override){z->override_warning=TRUE;append_warning(o->warning_codes,"override_warning");}}
+        if(has_label) {
+            int lx=x0,ly=y0;
+            if(a->point_count>=4){lx=(int)floor((a->points[0]+a->points[2])*.5);ly=(int)floor((a->points[1]+a->points[3])*.5);}
+            else if(a->point_count>=2){lx=(int)floor(a->points[0]);ly=(int)floor(a->points[1]);}
+            lx=CLAMP(lx,x0,x0+w-1);ly=CLAMP(ly,y0,y0+h-1);
+            double sr,sg,sb,surface[3],foreground[3];sample_rgb(data,stride,lx,ly,bg,&sr,&sg,&sb);
+            double source[3]={sr,sg,sb},text_ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]};
+            composite_rgba(z->label_surface_rgba,source,surface);composite_rgba(text_ink,surface,foreground);
+            if(contrast(lum(foreground[0],foreground[1],foreground[2]),lum(surface[0],surface[1],surface[2]))>=o->text_target)z->label_contrast_hits++;
+        } else if(direct_text) {
+            for(guint q=0;q<z->label_sample_count;q++) {
+                double sr,sg,sb,source[3],foreground[3];sample_rgb(data,stride,sample_x[q],sample_y[q],bg,&sr,&sg,&sb);source[0]=sr;source[1]=sg;source[2]=sb;
+                double text_ink[4]={z->ink_rgba[0],z->ink_rgba[1],z->ink_rgba[2],z->ink_rgba[3]};composite_rgba(text_ink,source,foreground);
+                if(contrast(lum(foreground[0],foreground[1],foreground[2]),lum(source[0],source[1],source[2]))>=o->text_target)z->label_contrast_hits++;
+            }
+        }
+        z->contrast_hits=z->shape_contrast_hits+z->shape_halo_hits+z->label_contrast_hits;
+        o->contrast_hits+=z->contrast_hits;
+        if(z->shape_contrast_hits+z->shape_halo_hits<z->shape_sample_count||z->label_contrast_hits<z->label_sample_count){z->contrast_unresolved=TRUE;append_warning(o->warning_codes,"contrast_unresolved");if(has_override){z->override_warning=TRUE;append_warning(o->warning_codes,"override_warning");}}
     }
     g_free(values); return o;
 }
@@ -286,7 +307,8 @@ char *miime_style_resolution_to_json(const MiimeStyleResolution *r,MiimeCrop cro
         const MiimeAnnotationStyleResult *a=&r->annotations[i];
         if(i)g_string_append_c(json,',');
         g_string_append(json,"{\"id\":"); json_append_string(json,a->annotation_id);
-        g_string_append_printf(json,",\"local_sample_count\":%u,\"contrast_hits\":%u,\"coverage\":",
+        g_string_append_printf(json,",\"shape_sample_count\":%u,\"shape_contrast_hits\":%u,\"shape_halo_hits\":%u,\"label_sample_count\":%u,\"label_contrast_hits\":%u,\"local_sample_count\":%u,\"contrast_hits\":%u,\"coverage\":",
+            a->shape_sample_count,a->shape_contrast_hits,a->shape_halo_hits,a->label_sample_count,a->label_contrast_hits,
             a->local_sample_count,a->contrast_hits);
         if(a->local_sample_count)g_string_append_printf(json,"%.6f",(double)a->contrast_hits/a->local_sample_count);
         else g_string_append(json,"null");

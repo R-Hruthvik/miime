@@ -14,7 +14,11 @@ Desktop annotation JSON now restores root-level requested render config, and shu
 
 Contrast sampling now follows actual annotation geometry with bounded, deduplicated local samples: line-like paths use their segments; rectangles, ellipses, circles, and pins use contours; direct text uses measured bounds and samples source pixels beneath it. Crop and blur operations are excluded. Direct text does not assume a theme label surface, matching the renderer. Marker contrast accounts for its rendered 0.35 alpha before halo decisions.
 
+The final follow-up adds independent shape and label-text coverage fields for labeled annotations. Shape coverage records direct ink hits and halo-rescued hits separately; label coverage uses the resolved label surface and text target, and both must pass independently. Bracket samples now follow the renderer's two arms and vertical stroke, capped and deduplicated to 64 source pixels. Regression fixtures cover mixed shape/label outcomes and a contrasting diagonal-only background.
+
 Focused style/schema/render tests, full `make test`, forced `make -B all`, and `git diff --check` passed after these changes. The existing legacy export/layout hashes remain unchanged.
+
+After the final coverage/bracket correction, `make test_style`, full `make test`, `make -B all`, and `git diff --check` passed. The first full-suite attempt used stale desktop objects after the diagnostics struct changed; rebuilding all targets forced MCP/headless/CLI parity back to green.
 
 ## Verification
 
