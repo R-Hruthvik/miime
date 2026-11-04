@@ -729,6 +729,6 @@ static char *serialize_annotations(const MiimeAnnotationStack *stack, const Miim
 
 char *miime_schema_serialize(const MiimeAnnotationStack *stack) { return serialize_annotations(stack,NULL); }
 char *miime_schema_serialize_with_config(const MiimeAnnotationStack *stack, const MiimeStyleConfig *config) {
-    if(!config || (!config->has_drawing_style && !config->has_theme && !config->has_analysis_background)) return miime_schema_serialize(stack);
+    if(!config || (!config->has_drawing_style && !config->has_theme && !config->has_analysis_background && !config->has_aesthetic_style)) return miime_schema_serialize(stack);
     return serialize_annotations(stack,config);
 }

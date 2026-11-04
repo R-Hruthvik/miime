@@ -118,6 +118,14 @@ assert inherited_info["resolution"]["theme"] == 2 and inherited_info["resolution
 send({"jsonrpc":"2.0","id":60,"method":"tools/call","params":{"name":"get_ux_annotations","arguments":{}}})
 stored = json.loads(recv()["result"]["content"][0]["text"])
 assert stored["theme"] == "dark" and stored["drawing_style"] == "editorial" and stored["analysis_background"] == "#AABBCC", stored
+# Ordinary render and dry-run calls preserve config established by patch.
+send({"jsonrpc":"2.0","id":66,"method":"tools/call","params":{"name":"render_ux_annotations","arguments":{"annotations":[{"type":"rect","points":[10,10,30,30]}]}}})
+assert "result" in recv()
+send({"jsonrpc":"2.0","id":67,"method":"tools/call","params":{"name":"render_ux_annotations","arguments":{"dry_run":True,"annotations":[{"type":"rect","points":[10,10,30,30]}]}}})
+assert "result" in recv()
+send({"jsonrpc":"2.0","id":78,"method":"tools/call","params":{"name":"get_ux_annotations","arguments":{}}})
+stored_after_render = json.loads(recv()["result"]["content"][0]["text"])
+assert stored_after_render["theme"] == "dark" and stored_after_render["drawing_style"] == "editorial" and stored_after_render["analysis_background"] == "#AABBCC", stored_after_render
 send({"jsonrpc":"2.0","id":61,"method":"tools/call","params":{"name":"patch_ux_annotations","arguments":{"reset_render_config":True,"theme":"warm","annotations":[{"type":"rect","points":[10,10,30,30]}],"dry_run":True}}})
 assert "result" in recv()
 send({"jsonrpc":"2.0","id":62,"method":"tools/call","params":{"name":"get_ux_annotations","arguments":{}}})

@@ -19,6 +19,13 @@ int main(void) {
     MiimeStyleConfig alias_only={0};
     assert(miime_schema_deserialize_render_config("{\"aesthetic_style\":\"clean_technical\"}",&alias_only,NULL));
     assert(alias_only.has_aesthetic_style && !alias_only.has_drawing_style && !alias_only.has_theme);
+    MiimeAnnotationStack *alias_stack=miime_schema_deserialize("{\"annotations\":[{\"type\":\"rect\",\"points\":[1,2,3,4]}]}",NULL);
+    char *alias_json=miime_schema_serialize_with_config(alias_stack,&alias_only);
+    assert(alias_json && strstr(alias_json,"\"aesthetic_style\":\"clean_technical\"") && strstr(alias_json,"\"color\"") && strstr(alias_json,"\"font_size\""));
+    MiimeStyleConfig alias_roundtrip={0};
+    assert(miime_schema_deserialize_render_config(alias_json,&alias_roundtrip,NULL));
+    assert(alias_roundtrip.has_aesthetic_style && alias_roundtrip.aesthetic_style==MIIME_AESTHETIC_CLEAN_TECHNICAL);
+    g_free(alias_json); miime_annot_stack_free(alias_stack);
     const char *bad_config[] = {"{\"drawing_style\":\"scribble\"}", "{\"theme\":false}", "{\"analysis_background\":\"#11223344\"}", "{\"analysis_background\":\"#gg2233\"}", "{\"reset_render_config\":\"true\"}"};
     for (guint i=0; i<G_N_ELEMENTS(bad_config); i++) {
         MiimeStyleConfig unchanged = {0}; unchanged.theme = MIIME_THEME_WARM; unchanged.has_theme = TRUE;

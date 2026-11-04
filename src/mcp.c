@@ -339,8 +339,13 @@ static char *handle_render_internal(const char *args, const char *annotations_ov
 
     MiimeAestheticStyle aesthetic=config_aesthetic(&local_config,args);
 
-    /* serialize current state */
-    char *ser = miime_schema_serialize(stack);
+    /* Persist requested config with annotations. A plain render keeps config
+     * established by patch; an explicit request records its own requested
+     * fields while still leaving the patch config inheritance state alone. */
+    gboolean request_has_config = local_config.has_drawing_style || local_config.has_theme ||
+        local_config.has_analysis_background || local_config.has_aesthetic_style;
+    const MiimeStyleConfig *state_config = request_has_config ? &local_config : &g_state_render_config;
+    char *ser = miime_schema_serialize_with_config(stack, state_config);
     setstr(&g_state_annotations, ser);
     g_free(ser);
     /* render */
